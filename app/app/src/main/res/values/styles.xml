@@ -1,0 +1,12 @@
+<resources>
+    <style name="AppTheme" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:colorAccent">@color/pleos_text</item>
+        <item name="android:statusBarColor">@color/pleos_surface</item>
+        <item name="android:navigationBarColor">@color/pleos_surface</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:windowBackground">@color/pleos_surface</item>
+        <item name="android:windowActionModeOverlay">true</item>
+    </style>
+</resources>

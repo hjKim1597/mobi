@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Full square tile drawn as one vector: the Pleos dock shows plain drawables as-is, like the system tiles. -->
+<vector xmlns:aapt="http://schemas.android.com/aapt" xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+  <path android:name="full-bleed-tile" android:pathData="M0,0 H108 V108 H0 Z" android:fillType="evenOdd" android:fillAlpha="1">
+    <aapt:attr name="android:fillColor">
+      <gradient android:type="linear" android:startX="0" android:startY="0" android:endX="108" android:endY="108" android:tileMode="clamp">
+        <item android:offset="0" android:color="#393A3C" />
+        <item android:offset="0.52" android:color="#333436" />
+        <item android:offset="1" android:color="#2C2D2F" />
+      </gradient>
+    </aapt:attr>
+  </path>
+  <path android:name="tile-top-left-edge" android:pathData="M0,0 H108 V0.65 H0.65 V108 H0 Z" android:fillType="evenOdd" android:fillAlpha="0.055" android:fillColor="#FFFFFF" />
+
+  <group android:pivotX="54" android:pivotY="53" android:scaleX="1.15" android:scaleY="1.15">
+  <path android:name="binding-left" android:pathData="M39,28 Q39,25 42,25 Q45,25 45,28 V37 Q45,40 42,40 Q39,40 39,37 Z" android:fillType="evenOdd" android:fillAlpha="1">
+    <aapt:attr name="android:fillColor">
+      <gradient android:type="linear" android:startX="42" android:startY="25" android:endX="42" android:endY="40" android:tileMode="clamp">
+        <item android:offset="0" android:color="#D2D8E1" />
+        <item android:offset="1" android:color="#B2BBC9" />
+      </gradient>
+    </aapt:attr>
+  </path>
+  <path android:name="binding-right" android:pathData="M63,28 Q63,25 66,25 Q69,25 69,28 V37 Q69,40 66,40 Q63,40 63,37 Z" android:fillType="evenOdd" android:fillAlpha="1">
+    <aapt:attr name="android:fillColor">
+      <gradient android:type="linear" android:startX="30" android:startY="27" android:endX="78" android:endY="81" android:tileMode="clamp">
+        <item android:offset="0" android:color="#1262F5" />
+        <item android:offset="1" android:color="#1262F5" />
+      </gradient>
+    </aapt:attr>
+  </path>
+  <path android:name="binding-highlight" android:pathData="M40,28 Q40,26 42,26 V26.6 Q40.6,26.6 40.6,28 V36 H40 Z" android:fillType="evenOdd" android:fillAlpha="0.22" android:fillColor="#FFFFFF" />
+  <path android:name="day-body" android:pathData="M36,33 H69 L79,43 V66 Q79,75 70,75 H49 L36,81 V75 Q29,75 29,68 V40 Q29,33 36,33 Z M37,44 H71 V49 H37 Z" android:fillType="evenOdd" android:fillAlpha="1">
+    <aapt:attr name="android:fillColor">
+      <gradient android:type="linear" android:startX="32" android:startY="28" android:endX="79" android:endY="81" android:tileMode="clamp">
+        <item android:offset="0" android:color="#F9FAFC" />
+        <item android:offset="0.48" android:color="#E4E7EC" />
+        <item android:offset="1" android:color="#B7BEC9" />
+      </gradient>
+    </aapt:attr>
+  </path>
+  <path android:name="clipped-day-corner" android:pathData="M69,33 L79,43 H72 Q69,43 69,40 Z" android:fillType="evenOdd" android:fillAlpha="0.55" android:fillColor="#A7AFBB" />
+  <path android:name="top-left-highlight" android:pathData="M36,33 H68 V33.7 H36 Q29.7,33.7 29.7,40 V66 H29 V40 Q29,33 36,33 Z" android:fillType="evenOdd" android:fillAlpha="0.26" android:fillColor="#FFFFFF" />
+</group>
+</vector>

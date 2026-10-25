@@ -1,0 +1,8 @@
+<resources>
+    <color name="pleos_surface">#FFFFFF</color>
+    <color name="pleos_text">#000000</color>
+    <color name="pleos_secondary">#666666</color>
+    <color name="pleos_divider">#CBC6CC</color>
+    <color name="pleos_active">#1262F5</color>
+    <color name="pleos_ripple">#33858585</color>
+</resources>

@@ -1,0 +1,22 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "mobi-server",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-08-29",
+  "ai": { "binding": "AI" },
+  "vars": {
+    "DEVICE_DAILY_CAP": "20",
+    "GLOBAL_DAILY_CAP": "250",
+    "PUBLIC_ORIGIN": "https://mobi-dev.mobi-car.workers.dev"
+  },
+  // GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and TOKEN_ENCRYPTION_KEY are Worker secrets/env.
+  "durable_objects": {
+    "bindings": [
+      { "name": "DEVICE_AGENTS", "class_name": "DeviceAgent" },
+      { "name": "PAIRING", "class_name": "Pairing" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["DeviceAgent", "Pairing"] }
+  ]
+}

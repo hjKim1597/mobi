@@ -1,0 +1,62 @@
+<resources>
+    <string name="app_name">Mobi</string>
+    <string name="status_unknown">차량 상태를 확인하고 있어요</string>
+    <string name="status_parked">출발하면 오늘 일정을\n먼저 알려드릴게요</string>
+    <string name="status_driving">주행 중엔 음성으로 안내해요</string>
+    <string name="status_restricted">안전을 위해 음성으로만 안내해요</string>
+    <string name="home_guidance">Google 계정을 연결하면 오늘 일정을 들을 수 있어요.</string>
+    <string name="driving_guidance">화면은 주차 후에 사용할 수 있어요.</string>
+    <string name="pairing_title">휴대폰에서\nGoogle 계정을 연결해요</string>
+    <string name="pairing_guidance">1. 휴대폰 카메라로 QR 코드를 스캔해요.\n2. Google 계정으로 로그인해요.</string>
+    <string name="parked_eyebrow">주차 중</string>
+    <string name="pairing_eyebrow">계정 연결</string>
+    <string name="complete_eyebrow">안내를 모두 들었어요</string>
+    <string name="speaking">음성으로 안내하고 있어요</string>
+    <string name="voice_waiting">음성 안내를 기다리고 있어요</string>
+    <string name="today_subtitle">오늘의 브리핑</string>
+    <string name="briefing_progress">%1$d / %2$d</string>
+    <string name="demo_guidance">아침 일정부터 차례로 알려드릴게요.</string>
+    <string name="response_guidance">오늘 일정을 차례로 알려드릴게요.</string>
+    <string name="complete_guidance">필요하면 데모를 다시 볼 수 있어요.</string>
+    <string name="status_mic_unavailable">마이크를 사용할 수 없음</string>
+    <string name="response_prompt">오늘 일정이 있어요. 들을까요?</string>
+    <string name="demo_response_prompt">오늘 일정 3개 있어요. 들을까요?</string>
+    <string name="connect">계정 연결</string>
+    <string name="connect_required">정차 중 계정을 연결해 주세요</string>
+    <string name="pairing_pending">휴대폰으로 QR을 스캔해 주세요</string>
+    <string name="pairing_processing">연결을 확인하고 있어요</string>
+    <string name="pairing_paired">연결됐어요</string>
+    <string name="pairing_failed">연결하지 못했어요. 다시 시도해 주세요</string>
+    <string name="pairing_expired">연결 코드가 만료됐어요</string>
+    <string name="pairing_registering">연결을 준비하고 있어요</string>
+    <string name="speak">말하기</string>
+    <string name="listening">듣고 있어요</string>
+    <string name="thinking">확인하고 있어요</string>
+    <string name="not_now">지금은 아님</string>
+    <string name="today_title">오늘 일정 %1$d개</string>
+    <string name="all_day">종일</string>
+    <string name="accept">들을래요</string>
+    <string name="decline">됐어요</string>
+    <string name="demo">데모 보기</string>
+    <string name="live">실시간 기능</string>
+    <string name="demo_badge">가상 일정</string>
+    <string name="next">다음</string>
+    <string name="briefing_complete">브리핑이 끝났어요</string>
+    <string name="notification_channel">차량 상태</string>
+    <string name="notification_description">주차 및 대화 상태 안내</string>
+    <string name="notification_open">열기</string>
+    <string name="notification_accept">들을래요</string>
+    <string name="notification_decline">됐어요</string>
+
+    <item type="id" name="status" />
+    <item type="id" name="cards" />
+    <item type="id" name="accept" />
+    <item type="id" name="decline" />
+    <item type="id" name="demo" />
+    <item type="id" name="live" />
+    <item type="id" name="next" />
+    <item type="id" name="connect" />
+    <item type="id" name="speak" />
+    <item type="id" name="pairing_qr" />
+    <item type="id" name="pairing_status" />
+</resources>
