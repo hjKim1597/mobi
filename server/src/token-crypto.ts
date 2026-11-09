@@ -39,13 +39,30 @@ async function importKey(key: string): Promise<CryptoKey> {
 }
 
 export async function encryptTokens(key: string, deviceId: string, payload: TokenPayload): Promise<TokenEnvelope> {
+  return encryptPrivateValue(key, aad(deviceId), payload);
+}
+
+/** Separate caller-owned AAD keeps action envelopes distinct from OAuth tokens. */
+export async function encryptPrivateValue(key: string, additionalData: Uint8Array, payload: unknown): Promise<TokenEnvelope> {
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const plaintext = new TextEncoder().encode(JSON.stringify(payload));
-  const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: aad(deviceId), tagLength: 128 }, await importKey(key), plaintext);
-  return { v: 1, iv: encodeBase64(iv), ciphertext: encodeBase64(new Uint8Array(ciphertext)) };
+  try {
+    const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData, tagLength: 128 }, await importKey(key), plaintext);
+    return { v: 1, iv: encodeBase64(iv), ciphertext: encodeBase64(new Uint8Array(ciphertext)) };
+  } finally { plaintext.fill(0); }
 }
 
 export async function decryptTokens(key: string, deviceId: string, envelope: TokenEnvelope): Promise<TokenPayload> {
+  const payload = await decryptPrivateValue(key, aad(deviceId), envelope);
+  if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) throw new Error('Invalid encrypted token data');
+  const value = payload as Record<string, unknown>;
+  if (typeof value.accessToken !== 'string' || (typeof value.refreshToken !== 'string' && value.refreshToken !== null)
+    || typeof value.expiresAt !== 'number' || !Number.isFinite(value.expiresAt)
+    || !Array.isArray(value.scopes) || value.scopes.some(scope => typeof scope !== 'string')) throw new Error('Invalid encrypted token data');
+  return value as unknown as TokenPayload;
+}
+
+export async function decryptPrivateValue(key: string, additionalData: Uint8Array, envelope: TokenEnvelope): Promise<unknown> {
   if (!envelope || envelope.v !== 1 || typeof envelope.iv !== 'string' || typeof envelope.ciphertext !== 'string') {
     throw new Error('Invalid encrypted token data');
   }
@@ -54,19 +71,13 @@ export async function decryptTokens(key: string, deviceId: string, envelope: Tok
   if (!iv || iv.byteLength !== 12 || !ciphertext || ciphertext.byteLength < 16) throw new Error('Invalid encrypted token data');
   let plaintext: ArrayBuffer;
   try {
-    plaintext = await crypto.subtle.decrypt({ name: 'AES-GCM', iv, additionalData: aad(deviceId), tagLength: 128 }, await importKey(key), ciphertext);
+    plaintext = await crypto.subtle.decrypt({ name: 'AES-GCM', iv, additionalData, tagLength: 128 }, await importKey(key), ciphertext);
   } catch {
     throw new Error('Unable to decrypt token data');
   }
   try {
-    const payload: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true, ignoreBOM: false }).decode(plaintext));
-    if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) throw new Error();
-    const value = payload as Record<string, unknown>;
-    if (typeof value.accessToken !== 'string' || (typeof value.refreshToken !== 'string' && value.refreshToken !== null)
-      || typeof value.expiresAt !== 'number' || !Number.isFinite(value.expiresAt)
-      || !Array.isArray(value.scopes) || value.scopes.some(scope => typeof scope !== 'string')) throw new Error();
-    return value as unknown as TokenPayload;
+    return JSON.parse(new TextDecoder('utf-8', { fatal: true, ignoreBOM: false }).decode(plaintext)) as unknown;
   } catch {
     throw new Error('Invalid encrypted token data');
-  }
+  } finally { new Uint8Array(plaintext).fill(0); }
 }

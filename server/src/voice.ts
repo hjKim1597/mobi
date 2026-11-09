@@ -1,14 +1,18 @@
 import { z } from 'zod';
-import { inspectPcmWav, readAudioResponse, base64ToBytes, AudioInputError } from './audio';
+import { inspectPcmWav, readAudioResponse, AudioInputError } from './audio';
 import { withDeadline, assertBeforeDeadline, runHedged, trackInference, reserveInference, type HedgeContext, VOICE_STAGE_ADMISSION, VoiceDeadlineError } from './deadline';
 import { sanitizeTtsText } from './tts';
 import { WorkersAiLlmProvider, type LlmProvider } from './llm';
 import type { TodayCalendar, TodayEvent } from './calendar';
 import { routeCalendarQuestion, type CalendarQuestionAnswer } from './calendar-router';
 import { failureSentences } from './failure-audio';
+import { ActionError, calendarAddRequest } from './actions';
+import type { actionProposalSchema } from './action-schemas';
+import { calendarUnavailableSentence } from './calendar-unavailable-audio';
 
 export type InputAudio = { data: string; mimeType: 'audio/wav' | 'audio/webm' | 'audio/mp4' };
 export type OutputAudio = { data: string; mimeType: 'audio/wav' };
+export type TranscriptionMode = 'confirm' | 'turn' | 'dictation' | 'approval_mail' | 'approval_calendar';
 export class VoiceHttpError extends Error {
   constructor(readonly status: 403 | 500 | 502) { super('Voice request failed'); }
 }
@@ -47,44 +51,44 @@ function hasSpeech(audio: InputAudio): boolean {
   const stats = inspectPcmWav(audio.data);
   return stats.rmsDb >= -45 && stats.activeRatio >= 0.06;
 }
-export async function transcribe(ai: Ai, audio: InputAudio, mode: 'confirm' | 'turn', deadlineAt: number, context: HedgeContext = {}): Promise<string> {
+export async function transcribe(ai: Ai, audio: InputAudio, mode: TranscriptionMode, deadlineAt: number, context: HedgeContext = {}): Promise<string> {
   try {
     assertBeforeDeadline(deadlineAt);
     return hasSpeech(audio) ? await transcribeSpeech(ai, audio, mode, deadlineAt, context) : '';
   } finally { audio.data = ''; }
 }
-async function transcribeSpeech(ai: Ai, audio: InputAudio, mode: 'confirm' | 'turn', deadlineAt: number, context: HedgeContext = {}): Promise<string> {
-  // Real-account turns spent >2s in STT; start their fallback early enough
-  // to leave room for LLM/TTS. Matched quality veto restores confirm to 1400ms; Turbo stays primary.
+async function transcribeSpeech(ai: Ai, audio: InputAudio, mode: TranscriptionMode, deadlineAt: number, context: HedgeContext = {}): Promise<string> {
+  const audioData = audio.data;
+  const approvalPrompt = mode === 'approval_mail'
+    ? '짧은 한국어 승인 응답입니다. 가능한 응답: 보내. 보내줘. 보내 줘. 취소. 아니. 하지 마. 보내지 마.'
+    : mode === 'approval_calendar'
+      ? '짧은 한국어 승인 응답입니다. 가능한 응답: 추가해. 추가해줘. 추가해 줘. 등록해. 등록해줘. 등록해 줘. 취소. 아니. 하지 마. 추가하지 마. 등록하지 마.'
+      : undefined;
+  const parameters = {
+    audio: audioData, task: 'transcribe', language: 'ko', vad_filter: true, condition_on_previous_text: false,
+    ...(mode === 'confirm' ? { initial_prompt: '짧은 한국어 확인 응답입니다. 가능한 응답: ' + REPLIES.join('. ') + '.' }
+      : approvalPrompt ? { initial_prompt: approvalPrompt } : {}),
+  };
+  // Turn/confirm race identical Korean Turbo requests. Action modes stay primary-only.
   return runHedged('stt', deadlineAt, async (call, signal) => {
-    const audioData = audio.data;
+    // Both real Turbo calls reserve the same conservative audio-minute estimate.
     await reserveInference(context, 'stt', call, Math.ceil(audioData.length * 0.75 / 32000 * 46.63 / 60), deadlineAt, signal);
-    let hedgeAudio: number[] | undefined;
-    try {
-      let pending: unknown;
-      if (call === 'hedge') {
-        const decoded = base64ToBytes(audioData);
-        try { hedgeAudio = Array.from(decoded); } finally { decoded.fill(0); }
-        pending = ai.run('@cf/openai/whisper', { audio: hedgeAudio });
-      } else {
-        pending = ai.run('@cf/openai/whisper-large-v3-turbo', {
-          audio: audioData, task: 'transcribe', language: 'ko', vad_filter: true, condition_on_previous_text: false,
-          ...(mode === 'confirm' ? { initial_prompt: '짧은 한국어 확인 응답입니다. 가능한 응답: ' + REPLIES.join('. ') + '.' } : {}),
-        });
-      }
-      const result = await trackInference(pending, signal, context);
-      const text = z.object({ text: z.string().max(4000) }).parse(result).text;
-      // Suppressed content is a valid safe empty result, never a write action.
-      return /시청|구독|좋아요|자막|감사합니다|thank you|subscribe/i.test(text) ? '' : text.trim();
-    } finally {
-      // The numeric hedge payload stays intact until its inference promise settles.
-      hedgeAudio?.fill(0);
+    const pending = ai.run('@cf/openai/whisper-large-v3-turbo', { ...parameters });
+    const result = await trackInference(pending, signal, context);
+    const text = z.object({ text: z.string().max(4000) }).parse(result).text;
+    // Turns keep their frozen filter; action dictation suppresses only a whole known hallucination phrase.
+    if (mode === 'dictation') {
+      const phrase = text.trim().replace(/^[\p{P}\p{S}\s]+|[\p{P}\p{S}\s]+$/gu, '').toLocaleLowerCase();
+      return new Set(['시청', '구독', '좋아요', '자막', '감사합니다', 'thank you', 'subscribe']).has(phrase) ? '' : text.trim();
     }
-  }, context, mode === 'confirm' ? 1400 : 1000);
+    return /시청|구독|좋아요|자막|감사합니다|thank you|subscribe/i.test(text) ? '' : text.trim();
+  }, context, mode === 'confirm' ? 1400 : mode === 'turn' ? 1000 : null);
 }
 
-export async function synthesize(ai: Ai, value: string, deadlineAt: number, context: HedgeContext = {}): Promise<{ text: string; audio: OutputAudio }> {
-  const text = truncateText(sanitizeTtsText(value.slice(0, MAX_TTS_TEXT_LENGTH * 4)), MAX_TTS_TEXT_LENGTH);
+export async function synthesize(ai: Ai, value: string, deadlineAt: number, context: HedgeContext = {}, mode: 'general' | 'reply_readback' = 'general'): Promise<{ text: string; audio: OutputAudio }> {
+  const sanitized = sanitizeTtsText(mode === 'reply_readback' ? value : value.slice(0, MAX_TTS_TEXT_LENGTH * 4), mode);
+  if (mode === 'reply_readback' && sanitized.length > MAX_TTS_TEXT_LENGTH) throw Error('Reply readback too long');
+  const text = mode === 'reply_readback' ? sanitized : truncateText(sanitized, MAX_TTS_TEXT_LENGTH);
   if (!text) throw Error('Empty TTS text');
   return runHedged('tts', deadlineAt, async (call, signal) => {
     // The output reader caps decoded WAV at 2MiB (~66s at PCM16/16kHz).
@@ -127,6 +131,11 @@ export async function handleTurn(input: { tripId: string; audio: InputAudio }, c
   readCached?(calendar: TodayCalendar, answer: CalendarQuestionAnswer, tripId: string): Promise<{ audio: OutputAudio; expiresAt: number } | null>;
   onAnswerValidity?(expiresAt: number): void;
   observeAnswer?(intent: CalendarQuestionAnswer['intent'] | 'abstain', cache: 'hit' | 'miss' | 'unused', degraded: boolean): void;
+  proposeCalendar?(transcript: string, requestId: string): Promise<{
+    sentences: { text: string; audio: OutputAudio }[];
+    actionProposal?: z.infer<typeof actionProposalSchema>;
+    actionProposalPending?: { actionId: string; version: number };
+  }>;
 }) {
   const { ai, deadlineAt } = context;
   const responseReadyAt = Math.min(deadlineAt, context.responseReadyAt);
@@ -156,6 +165,17 @@ export async function handleTurn(input: { tripId: string; audio: InputAudio }, c
     await check();
     if (!result.ok) throw result.error;
     const calendar = result.calendar;
+    if (context.proposeCalendar && calendarAddRequest(transcript)) {
+      let handoff;
+      try { handoff = await context.proposeCalendar(transcript, turnId); }
+      catch (cause) {
+        if (!(cause instanceof ActionError)) throw cause;
+        await check(deadlineAt);
+        return { turnId, transcript, sentences: [calendarUnavailableSentence] };
+      }
+      await check(deadlineAt);
+      return { turnId, transcript, ...handoff, sentences: handoff.sentences.slice(0, 1) };
+    }
     const routed = routeCalendarQuestion(transcript, calendar, new Date());
     let text: string;
     if (routed) {

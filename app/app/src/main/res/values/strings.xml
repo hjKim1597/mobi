@@ -30,6 +30,8 @@
     <string name="pairing_expired">연결 코드가 만료됐어요</string>
     <string name="pairing_registering">연결을 준비하고 있어요</string>
     <string name="speak">말하기</string>
+    <string name="quiet_mail_setting">메일 내용 읽지 않기</string>
+    <string name="quiet_mail_setting_description">운전 중에는 메일이 왔다는 것만 알려드려요.</string>
     <string name="listening">듣고 있어요</string>
     <string name="thinking">확인하고 있어요</string>
     <string name="not_now">지금은 아님</string>

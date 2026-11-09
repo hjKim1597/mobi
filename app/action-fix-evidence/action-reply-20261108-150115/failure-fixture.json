@@ -1,0 +1,20 @@
+{
+  "requests": [
+    {
+      "method": "POST",
+      "path": "/v1/pairing",
+      "size": 2,
+      "authMatches": true,
+      "at": 3091616.609177708
+    },
+    {
+      "method": "POST",
+      "path": "/v1/pairing",
+      "size": 2,
+      "authMatches": true,
+      "at": 3091617.794755916
+    }
+  ],
+  "actions": [],
+  "config": {}
+}

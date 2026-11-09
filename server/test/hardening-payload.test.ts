@@ -128,9 +128,12 @@ describe('briefing and OAuth bounds', () => {
     expect(run.mock.calls[0][1]).toMatchObject({ prompt: result.text });
   });
 
-  it('requests and requires Calendar scopes only', () => {
+  it('requests action scopes incrementally without widening required legacy read scopes', () => {
     const url = new URL(authorizationUrl({ GOOGLE_CLIENT_ID: 'id', GOOGLE_CLIENT_SECRET: 'secret', PUBLIC_ORIGIN: 'https://mobi.example' }, 'state'));
     expect(url.searchParams.get('scope')?.split(' ')).toEqual(GOOGLE_SCOPES);
-    expect(GOOGLE_SCOPES.some(scope => scope.includes('gmail'))).toBe(false);
+    expect(GOOGLE_SCOPES.filter(scope => scope.includes('gmail'))).toEqual([
+      'https://www.googleapis.com/auth/gmail.readonly', 'https://www.googleapis.com/auth/gmail.compose',
+    ]);
+    expect(url.searchParams.get('include_granted_scopes')).toBe('true');
   });
 });

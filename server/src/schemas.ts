@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { actionProposalSchema, actionSuccessSchema } from './action-schemas';
 
 export const deviceResponseSchema = z.object({
   deviceId: z.uuid(),
@@ -118,14 +119,18 @@ export const confirmResponseSchema = z.object({ transcript: z.string(), match: z
 }).strict() }).strict();
 export const briefingResponseSchema = z.object({ briefingId: z.uuid(), tripId,
   bucket: z.enum(['short', 'summary', 'full']), text: z.string().min(1), audio: outputAudioSchema }).strict();
-export const turnResponseSchema = z.object({ turnId: z.uuid(), transcript: z.string(), sentences: z.array(sentenceSchema).max(1) }).strict();
+export const turnResponseSchema = z.object({ turnId: z.uuid(), transcript: z.string(), sentences: z.array(sentenceSchema).max(1),
+  actionProposal: z.lazy(() => actionProposalSchema).optional(),
+  actionProposalPending: z.object({ actionId: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/), version: z.number().int().positive() }).strict().optional(),
+}).strict();
 const knockEntrySchema = sentenceSchema.extend({ sha256: z.string().regex(/^[0-9a-f]{64}$/) }).strict();
 export const knockSchema = z.object({ version: z.literal('knock-v1'), date: z.iso.date(),
   timeZone: todayResponseSchema.shape.timeZone, eventCount: z.number().int().nonnegative(),
   online: knockEntrySchema, offline: knockEntrySchema }).strict();
 export const todayWithKnockResponseSchema = todayResponseSchema.extend({ knock: knockSchema }).strict();
 export const additionalResponseSchemas = {
-  200: z.union([pairingCreatedSchema, pairingStatusSchema, connectionDeletedSchema, todayResponseSchema, todayWithKnockResponseSchema, confirmResponseSchema, briefingResponseSchema, turnResponseSchema]),
+  200: z.union([pairingCreatedSchema, pairingStatusSchema, connectionDeletedSchema, todayResponseSchema, todayWithKnockResponseSchema, confirmResponseSchema, briefingResponseSchema, turnResponseSchema, z.lazy(() => actionSuccessSchema)]),
+  409: errorResponseSchema,
   410: errorResponseSchema,
   502: errorResponseSchema,
 } as const;

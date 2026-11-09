@@ -1,0 +1,9 @@
+[
+  {
+    "scenario": "action-cancel-hold",
+    "result": "PASS",
+    "flow": "cancel_in_hold",
+    "cancelBeforeTranscription": true,
+    "terminal": "cancelled"
+  }
+]

@@ -90,13 +90,19 @@ class MainActivity : Activity() {
 
     private fun handleAction(action: String, tripId: Long) {
         val current = service ?: return
-        when (action) {
+        val command = action.substringBefore('|')
+        val actionIdentity = action.substringAfter('|', "").ifEmpty { null }
+        when (command) {
             "accept" -> current.respond(tripId, true)
             "decline" -> current.respond(tripId, false)
             "demo" -> current.startDemo()
             "live" -> beginLive()
             "connect" -> current.connect()
             "speak" -> current.speak()
+            "quiet_mail_set" -> current.setQuietMail(tripId, actionIdentity == "true")
+            "action_reply", "action_calendar", "action_approve", "action_cancel",
+            "action_decline", "action_demo_mail", "action_demo_voice", "action_demo_dictate",
+            "action_demo_clarify" -> current.actionCommand(command, tripId, actionIdentity)
             // Demo card progression is local to MobiScreen and has no live side effect.
             "next" -> Unit
         }

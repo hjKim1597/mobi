@@ -5,11 +5,12 @@ import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
-import android.graphics.drawable.RippleDrawable
+import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.LayerDrawable
+import android.graphics.drawable.StateListDrawable
 import android.os.SystemClock
 import android.util.Log
 import android.view.Gravity
-import android.view.animation.PathInterpolator
 import android.view.View
 import android.view.ViewTreeObserver
 import android.widget.Button
@@ -38,7 +39,9 @@ class MobiScreen(
     }
     private val cardTitle = TextView(context)
     private val guidance = TextView(context)
+    private val quietMailToggle = QuietMailSettingRow(context)
     private val content = LinearLayout(context)
+    private val contentFade = ContentFade(this, content)
     private val textBlock = LinearLayout(context)
     private val eyebrow = TextView(context)
     private val eyebrowRow = LinearLayout(context)
@@ -47,6 +50,7 @@ class MobiScreen(
     private val cardDivider = View(context)
     private val primaryActions = LinearLayout(context)
     private val modeActions = LinearLayout(context)
+    private val actionActions = LinearLayout(context)
     private val cardDetail = TextView(context)
     private val acceptButton = button(R.string.accept, R.id.accept)
     private val declineButton = button(R.string.decline, R.id.decline)
@@ -55,9 +59,19 @@ class MobiScreen(
     private val nextButton = button(R.string.next, R.id.next)
     private val connectButton = button(R.string.connect, R.id.connect)
     private val speakButton = button(R.string.speak, R.id.speak)
+    private val actionReplyButton = button(R.string.action_reply, R.id.action_reply)
+    private val actionCalendarButton = button(R.string.action_calendar, R.id.action_calendar)
+    private val actionApproveButton = button(R.string.action_approve_reply, R.id.action_approve)
+    private val actionCancelButton = button(R.string.action_cancel, R.id.action_cancel)
+    private val actionDeclineButton = button(R.string.action_decline, R.id.action_decline)
+    private val demoMailButton = button(R.string.action_demo_mail, R.id.action_demo_mail)
+    private val demoVoiceButton = button(R.string.action_demo_voice, R.id.action_demo_voice)
+    private val demoDictateButton = button(R.string.action_demo_dictate, R.id.action_demo_dictate)
+    private val demoClarifyButton = button(R.string.action_demo_clarify, R.id.action_demo_clarify)
+    private val actionButtons = listOf(actionReplyButton, actionCalendarButton, actionApproveButton,
+        actionCancelButton, actionDeclineButton, demoMailButton, demoVoiceButton, demoDictateButton, demoClarifyButton)
     private val qr = ImageView(context).apply { id = R.id.pairing_qr; visibility = GONE; contentDescription = "계정 연결 QR" }
     private val pairingStatus = TextView(context).apply { id = R.id.pairing_status; textSize = 24f; visibility = GONE }
-    private val easeOut = PathInterpolator(0.23f, 1f, 0.32f, 1f)
     private var presentationKey: List<Any?>? = null
     private var qrUrl: String? = null
     private val demoSession = DemoSession()
@@ -122,6 +136,11 @@ class MobiScreen(
             topMargin = dp(44)
         })
         textBlock.addView(cards, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+        actionActions.gravity = Gravity.START or Gravity.CENTER_VERTICAL
+        actionButtons.forEach { actionActions.addView(it, actionLayout()) }
+        textBlock.addView(actionActions, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
+            topMargin = dp(32)
+        })
         styleText(pairingStatus, 24f, secondary = true)
         textBlock.addView(pairingStatus, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
             topMargin = dp(24)
@@ -135,7 +154,10 @@ class MobiScreen(
         for (control in listOf(demoButton, liveButton)) modeActions.addView(control, actionLayout())
         primaryActions.addView(modeActions)
         textBlock.addView(primaryActions, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
-            topMargin = dp(48)
+            topMargin = dp(80)
+        })
+        textBlock.addView(quietMailToggle, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
+            topMargin = resources.getDimensionPixelSize(R.dimen.quiet_setting_margin_top)
         })
         connectButton.setOnClickListener { state?.let { if (isInteractive() && !it.demo) onAction("connect", it.tripId) } }
         speakButton.setOnClickListener { state?.let { if (isInteractive() && !it.demo && it.micReady && it.voicePhase == "IDLE") onAction("speak", it.tripId) } }
@@ -166,6 +188,24 @@ class MobiScreen(
             val current = state ?: return@setOnClickListener
             if (isInteractive()) onAction("live", current.tripId)
         }
+        actionReplyButton.setOnClickListener { sendAction("action_reply") }
+        actionCalendarButton.setOnClickListener { sendAction("action_calendar") }
+        actionApproveButton.setOnClickListener { sendAction("action_approve") }
+        actionCancelButton.setOnClickListener { sendAction("action_cancel") }
+        actionDeclineButton.setOnClickListener { sendAction("action_decline") }
+        demoMailButton.setOnClickListener { sendAction("action_demo_mail") }
+        demoVoiceButton.setOnClickListener { sendAction("action_demo_voice") }
+        demoDictateButton.setOnClickListener { sendAction("action_demo_dictate") }
+        demoClarifyButton.setOnClickListener { sendAction("action_demo_clarify") }
+        quietMailToggle.setOnToggleListener { checked ->
+            val current = state ?: return@setOnToggleListener
+            if (!isInteractive(current) || current.demo || current.voicePhase != "IDLE" || current.action?.stage in
+                setOf("processing", "offer", "dictation", "readback", "approval", "holding", "clarification")) {
+                quietMailToggle.setChecked(current.quietMail)
+                return@setOnToggleListener
+            }
+            onAction("quiet_mail_set|$checked", current.tripId)
+        }
 
         viewTreeObserver.addOnPreDrawListener(object : ViewTreeObserver.OnPreDrawListener {
             override fun onPreDraw(): Boolean {
@@ -185,6 +225,17 @@ class MobiScreen(
         })
     }
 
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        val width = MeasureSpec.getSize(widthMeasureSpec)
+        val compact = width > 0 && width / resources.displayMetrics.density < 600f
+        val horizontal = dp(if (compact) 24 else 96)
+        val vertical = dp(if (compact) 24 else 72)
+        if (content.paddingLeft != horizontal || content.paddingTop != vertical) {
+            content.setPadding(horizontal, vertical, horizontal, vertical)
+        }
+        super.onMeasure(widthMeasureSpec, heightMeasureSpec)
+    }
+
     fun render(viewState: MobiViewState) {
         if (viewState.tripId != lastTripId || (viewState.demo && !lastDemo)) demoSession.reset()
         // Every accept entry point converges on BRIEFING. Initialize here rather
@@ -192,54 +243,39 @@ class MobiScreen(
         if (viewState.demo && viewState.state == DialogState.BRIEFING) demoSession.accept()
         lastTripId = viewState.tripId
         lastDemo = viewState.demo
+        val next = presentation(viewState)
+        val interactive = next.interactive
+        // Decide from the actual presentation before any view mutation or ARGB allocation.
+        val transition = interactive && ValueAnimator.areAnimatorsEnabled() &&
+            presentationKey != null && next.key != presentationKey
+        val previousPixels = if (transition) contentFade.capture() else null
         state = viewState
         drawGeneration++
 
-        val vehicle = viewState.vehicle
-        val interactive = isInteractive(viewState)
         // Unsafe visibility changes never wait for a transition or an animator frame.
         if (!interactive || !ValueAnimator.areAnimatorsEnabled()) resetMotion()
-        status.text = when {
-            !vehicle.available -> context.getString(R.string.status_unknown)
-            interactive -> context.getString(R.string.status_parked)
-            vehicle.restricted -> context.getString(R.string.status_restricted)
-            vehicle.gear == Gear.DRIVE || vehicle.gear == Gear.REVERSE -> context.getString(R.string.status_driving)
-            else -> context.getString(R.string.status_unknown)
-        }
-        if (interactive && !viewState.demo) {
-            status.text = when (viewState.voicePhase) {
-                "LISTENING" -> context.getString(R.string.listening)
-                "THINKING" -> context.getString(R.string.thinking)
-                else -> if (viewState.message.isNotEmpty() && viewState.message != context.getString(R.string.not_now)) viewState.message else status.text
-            }
-        }
-        val showQr = interactive && !viewState.demo && viewState.pairing.url != null
+        status.text = next.status
+        val showQr = next.showQr
         qr.visibility = if (showQr) VISIBLE else GONE
         if (showQr && qrUrl != viewState.pairing.url) {
             qrUrl = viewState.pairing.url
             runCatching { QrCode.bitmap(requireNotNull(qrUrl), dp(360)) }.onSuccess { qr.setImageBitmap(it) }
         } else if (!showQr) { qr.setImageDrawable(null); qrUrl = null }
-        val pairingLabel = when (viewState.pairing.status) {
-            "pending" -> R.string.pairing_pending
-            "processing" -> R.string.pairing_processing
-            "paired" -> R.string.pairing_paired
-            "failed" -> R.string.pairing_failed
-            "expired" -> R.string.pairing_expired
-            "registering" -> R.string.pairing_registering
-            else -> null
-        }
+        val pairingLabel = next.pairingLabel
         pairingStatus.visibility = if (interactive && !viewState.demo && pairingLabel != null &&
             viewState.pairing.status != "pending") VISIBLE else GONE
-        pairingStatus.text = pairingLabel?.let { context.getString(it) }.orEmpty()
+        pairingStatus.text = next.pairingText
 
+        val action = viewState.action.takeIf { interactive && !showQr }
+        val showAction = action != null
         val showResponse = interactive && viewState.state == DialogState.AWAITING_RESPONSE
         val showBriefing = interactive && viewState.state == DialogState.BRIEFING
         val showDemoBriefing = showBriefing && viewState.demo
         val showToday = interactive && !viewState.demo && viewState.today != null && !showQr
-        cards.visibility = if (!showQr && (showResponse || showBriefing || showToday)) VISIBLE else GONE
+        val showQuietMailSetting = interactive && !viewState.demo && !showQr
+        cards.visibility = if (!showQr && (showResponse || showBriefing || showToday || showAction)) VISIBLE else GONE
         val complete = showDemoBriefing && demoSession.isComplete
         status.visibility = if (cards.visibility == VISIBLE) GONE else VISIBLE
-        if (showQr) status.text = context.getString(R.string.pairing_title)
         status.contentDescription = status.text
         guidance.text = context.getString(when {
             !interactive -> R.string.driving_guidance
@@ -247,19 +283,17 @@ class MobiScreen(
             else -> R.string.home_guidance
         })
         guidance.visibility = if (cards.visibility == VISIBLE) GONE else VISIBLE
+        quietMailToggle.visibility = if (showQuietMailSetting) VISIBLE else GONE
+        quietMailToggle.isEnabled = showQuietMailSetting && viewState.voicePhase == "IDLE" && viewState.action?.stage !in
+            setOf("processing", "offer", "dictation", "readback", "approval", "holding", "clarification")
+        quietMailToggle.setChecked(viewState.quietMail)
         val textGravity = if (interactive) Gravity.START else Gravity.CENTER
         textBlock.gravity = if (interactive) Gravity.START else Gravity.CENTER_HORIZONTAL
         styleHeading(status, if (interactive) 64f else 52f)
         status.gravity = textGravity
         guidance.gravity = textGravity
         eyebrowRow.visibility = if (interactive) VISIBLE else GONE
-        eyebrow.text = context.getString(when {
-            showQr -> R.string.pairing_eyebrow
-            complete -> R.string.complete_eyebrow
-            viewState.demo && (showResponse || showDemoBriefing) -> R.string.demo_badge
-            showToday || showBriefing -> R.string.today_subtitle
-            else -> R.string.parked_eyebrow
-        })
+        eyebrow.text = next.eyebrow
         val cardIndex = DemoData.briefings.indexOf(demoSession.current)
         pager.visibility = if (showDemoBriefing && !complete) VISIBLE else GONE
         pager.contentDescription = context.getString(R.string.briefing_progress, cardIndex + 1, DemoData.briefings.size)
@@ -282,47 +316,147 @@ class MobiScreen(
             "SPEAKING" -> R.string.speaking
             else -> R.string.voice_waiting
         })
-        if (showResponse) {
-            cardTitle.text = context.getString(if (viewState.demo) R.string.demo_response_prompt else R.string.response_prompt)
-            cardDetail.text = context.getString(if (viewState.demo) R.string.demo_guidance else R.string.response_guidance)
-        } else if (showDemoBriefing) {
-            val briefing = demoSession.current
-            cardTitle.text = briefing?.let { "${it.name} · ${it.title}" } ?: context.getString(R.string.briefing_complete)
-            cardDetail.text = briefing?.detail ?: context.getString(R.string.complete_guidance)
-        } else if ((showBriefing || showToday) && !viewState.demo) {
-            val today = viewState.today
-            cardTitle.text = if (today == null) context.getString(R.string.connect_required) else context.getString(R.string.today_title, today.events.size)
-            cardDetail.text = today?.events?.joinToString("\n") { event ->
-                val time = if (event.allDay) context.getString(R.string.all_day) else runCatching {
-                    OffsetDateTime.parse(event.start).atZoneSameInstant(ZoneId.of(today.timeZone)).format(DateTimeFormatter.ofPattern("HH:mm"))
-                }.getOrDefault("")
-                "$time · ${event.title}"
-            }.orEmpty()
+        next.card?.let { (title, detail) -> cardTitle.text = title; cardDetail.text = detail }
+
+        if (action != null) {
+            cardTitle.text = action.title
+            cardDetail.text = if (action.demo) "${action.detail}\n${context.getString(R.string.action_demo_badge)}" else action.detail
+        } else if (!interactive || next.card == null) {
+            cardTitle.text = ""
+            cardDetail.text = ""
         }
+
+        actionReplyButton.visibility = if (action?.let { it.stage == "offer" && it.canReply } == true) VISIBLE else GONE
+        actionCalendarButton.visibility = if (action?.let { it.stage == "offer" && it.canAddCalendar } == true) VISIBLE else GONE
+        actionApproveButton.visibility = if (action?.stage in setOf("readback", "approval")) VISIBLE else GONE
+        actionApproveButton.text = context.getString(if (action?.kind == "calendar_insert") R.string.action_approve_calendar else R.string.action_approve_reply)
+        actionApproveButton.isEnabled = action?.readbackFinished == true
+        actionCancelButton.visibility = if (action?.stage in setOf("dictation", "readback", "approval", "holding", "clarification", "processing")) VISIBLE else GONE
+        actionDeclineButton.visibility = if (action?.stage == "offer") VISIBLE else GONE
+        demoMailButton.visibility = if (interactive && viewState.demo && complete && !showAction) VISIBLE else GONE
+        demoVoiceButton.visibility = if (interactive && viewState.demo &&
+            ((complete && !showAction) || action?.let { it.demo && it.stage == "result" } == true)) VISIBLE else GONE
+        demoDictateButton.visibility = if (action?.let { it.demo && it.stage == "dictation" } == true) VISIBLE else GONE
+        demoClarifyButton.visibility = if (action?.let { it.demo && it.stage == "clarification" } == true) VISIBLE else GONE
+        actionActions.visibility = if (actionButtons.any { it.visibility == VISIBLE }) VISIBLE else GONE
 
         acceptButton.visibility = if (showResponse) VISIBLE else GONE
         declineButton.visibility = if (showResponse) VISIBLE else GONE
         nextButton.visibility = if (showDemoBriefing && demoSession.current != null && !demoSession.isComplete) VISIBLE else GONE
         val canChooseMode = interactive && viewState.state != DialogState.KNOCKING && viewState.state != DialogState.AWAITING_RESPONSE
-        demoButton.visibility = if (canChooseMode && (!showDemoBriefing || complete)) VISIBLE else GONE
+        demoButton.visibility = if (next.demoVisible) VISIBLE else GONE
         liveButton.visibility = if (canChooseMode && !showQr && (!showDemoBriefing || complete)) VISIBLE else GONE
-        connectButton.visibility = if (canChooseMode && !viewState.demo && !showQr && (viewState.today == null || viewState.needsConnection)) VISIBLE else GONE
-        speakButton.visibility = if (canChooseMode && !viewState.demo && viewState.micReady && viewState.today != null && !viewState.needsConnection && viewState.voicePhase == "IDLE") VISIBLE else GONE
+        connectButton.visibility = if (next.connectVisible) VISIBLE else GONE
+        speakButton.visibility = if (next.speakVisible) VISIBLE else GONE
+        if (showAction && action?.stage != "result") {
+            listOf(acceptButton,declineButton,nextButton,demoButton,liveButton,connectButton,speakButton).forEach { it.visibility = GONE }
+        }
         modeActions.visibility = if ((0 until modeActions.childCount).any { modeActions.getChildAt(it).visibility == VISIBLE }) VISIBLE else GONE
         primaryActions.visibility = if ((0 until primaryActions.childCount).any { primaryActions.getChildAt(it).visibility == VISIBLE }) VISIBLE else GONE
-        val key = listOf(
-            interactive, status.text.toString(), eyebrow.text.toString(),
-            if (cards.visibility == VISIBLE) cardTitle.text.toString() to cardDetail.text.toString() else null,
-            showQr, pairingStatus.text.toString(), viewState.voicePhase,
-            connectButton.visibility, speakButton.visibility, demoButton.visibility,
-        )
-        if (interactive && ValueAnimator.areAnimatorsEnabled() && presentationKey != null && key != presentationKey) {
-            content.animate().cancel()
-            content.alpha = 0f
-            content.translationY = dp(8).toFloat()
-            content.animate().alpha(1f).translationY(0f).setDuration(180).setInterpolator(easeOut).start()
+        if (transition) {
+            if (ValueAnimator.areAnimatorsEnabled()) contentFade.start(previousPixels)
+            else {
+                previousPixels?.bitmap?.recycle()
+                resetMotion()
+            }
         }
-        presentationKey = key
+        presentationKey = next.key
+    }
+
+    private fun sendAction(name: String) {
+        val current = state ?: return
+        val action = current.action
+        if (!isInteractive(current)) return
+        val allowed = when (name) {
+            "action_reply" -> action?.let { it.stage == "offer" && it.canReply } == true
+            "action_calendar" -> action?.let { it.stage == "offer" && it.canAddCalendar } == true
+            "action_approve" -> action?.let { it.stage in setOf("readback", "approval") && it.readbackFinished } == true
+            "action_cancel" -> action?.stage in setOf("dictation", "readback", "approval", "holding", "clarification", "processing")
+            "action_decline" -> action?.stage == "offer"
+            "action_demo_mail" -> current.demo && demoSession.isComplete && action == null
+            "action_demo_voice" -> current.demo && ((demoSession.isComplete && action == null) ||
+                action?.let { it.demo && it.stage == "result" } == true)
+            "action_demo_dictate" -> action?.let { it.demo && it.stage == "dictation" } == true
+            "action_demo_clarify" -> action?.let { it.demo && it.stage == "clarification" } == true
+            else -> false
+        }
+        if (allowed) onAction(action?.identity?.let { "$name|$it" } ?: name, current.tripId)
+    }
+
+    private data class Presentation(
+        val interactive: Boolean, val status: String, val eyebrow: String,
+        val card: Pair<String, String>?, val showCards: Boolean, val showQr: Boolean,
+        val pairingLabel: Int?, val pairingText: String, val voicePhase: String,
+        val connectVisible: Boolean, val speakVisible: Boolean, val demoVisible: Boolean,
+    ) {
+        val key: List<Any?> = listOf(interactive, status, eyebrow, card.takeIf { showCards }, showQr,
+            pairingText, voicePhase, connectVisible, speakVisible, demoVisible)
+    }
+
+    private fun presentation(value: MobiViewState): Presentation {
+        val interactive = isInteractive(value)
+        val showQr = interactive && !value.demo && value.pairing.url != null
+        val response = interactive && value.state == DialogState.AWAITING_RESPONSE
+        val briefing = interactive && value.state == DialogState.BRIEFING
+        val demoBriefing = briefing && value.demo
+        val today = interactive && !value.demo && value.today != null && !showQr
+        val complete = demoBriefing && demoSession.isComplete
+        var status = context.getString(when {
+            !value.vehicle.available -> R.string.status_unknown
+            interactive -> R.string.status_parked
+            value.vehicle.restricted -> R.string.status_restricted
+            value.vehicle.gear == Gear.DRIVE || value.vehicle.gear == Gear.REVERSE -> R.string.status_driving
+            else -> R.string.status_unknown
+        })
+        if (interactive && !value.demo) status = when (value.voicePhase) {
+            "LISTENING" -> context.getString(R.string.listening)
+            "THINKING" -> context.getString(R.string.thinking)
+            else -> value.message.takeIf { it.isNotEmpty() && it != context.getString(R.string.not_now) } ?: status
+        }
+        if (showQr) status = context.getString(R.string.pairing_title)
+        val eyebrow = context.getString(when {
+            showQr -> R.string.pairing_eyebrow
+            complete -> R.string.complete_eyebrow
+            value.demo && (response || demoBriefing) -> R.string.demo_badge
+            today || briefing -> R.string.today_subtitle
+            else -> R.string.parked_eyebrow
+        })
+        val card = when {
+            response -> context.getString(if (value.demo) R.string.demo_response_prompt else R.string.response_prompt) to
+                context.getString(if (value.demo) R.string.demo_guidance else R.string.response_guidance)
+            demoBriefing -> (demoSession.current?.let { "${it.name} · ${it.title}" }
+                ?: context.getString(R.string.briefing_complete)) to
+                (demoSession.current?.detail ?: context.getString(R.string.complete_guidance))
+            (briefing || today) && !value.demo -> {
+                val data = value.today
+                val title = if (data == null) context.getString(R.string.connect_required)
+                    else context.getString(R.string.today_title, data.events.size)
+                val detail = data?.events?.joinToString("\n") { event ->
+                    val time = if (event.allDay) context.getString(R.string.all_day) else runCatching {
+                        OffsetDateTime.parse(event.start).atZoneSameInstant(ZoneId.of(data.timeZone))
+                            .format(DateTimeFormatter.ofPattern("HH:mm"))
+                    }.getOrDefault("")
+                    "$time · ${event.title}"
+                }.orEmpty()
+                title to detail
+            }
+            else -> null
+        }
+        val pairingLabel = when (value.pairing.status) {
+            "pending" -> R.string.pairing_pending
+            "processing" -> R.string.pairing_processing
+            "paired" -> R.string.pairing_paired
+            "failed" -> R.string.pairing_failed
+            "expired" -> R.string.pairing_expired
+            "registering" -> R.string.pairing_registering
+            else -> null
+        }
+        val canChoose = interactive && value.state != DialogState.KNOCKING && value.state != DialogState.AWAITING_RESPONSE
+        return Presentation(interactive, status, eyebrow, card, !showQr && (response || briefing || today), showQr,
+            pairingLabel, pairingLabel?.let { context.getString(it) }.orEmpty(), value.voicePhase,
+            canChoose && !value.demo && !showQr && (value.today == null || value.needsConnection),
+            canChoose && !value.demo && value.micReady && value.today != null && !value.needsConnection && value.voicePhase == "IDLE",
+            canChoose && (!demoBriefing || complete))
     }
 
     private fun isInteractive(): Boolean = state?.let(::isInteractive) ?: false
@@ -346,14 +480,20 @@ class MobiScreen(
     }
 
     private fun resetMotion() {
-        content.animate().cancel()
-        content.alpha = 1f
-        content.translationY = 0f
+        contentFade.reset()
         for (control in listOf(connectButton, speakButton, acceptButton, declineButton, nextButton, demoButton, liveButton)) {
             control.animate().cancel()
             control.scaleX = 1f
             control.scaleY = 1f
-            (control.background as? RippleDrawable)?.jumpToCurrentState()
+            control.isPressed = false
+            control.background.jumpToCurrentState()
+        }
+        for (control in actionButtons) {
+            control.animate().cancel()
+            control.scaleX = 1f
+            control.scaleY = 1f
+            control.isPressed = false
+            control.background.jumpToCurrentState()
         }
     }
 
@@ -362,30 +502,17 @@ class MobiScreen(
         super.onDetachedFromWindow()
     }
 
-    private fun surface(color: Int, outlined: Boolean = false) = GradientDrawable().apply {
+    private fun surface(color: Int, border: Int? = null) = GradientDrawable().apply {
         setColor(context.getColor(color))
-        cornerRadius = dp(2).toFloat()
-        if (outlined) setStroke(dp(1), context.getColor(R.color.pleos_divider))
+        cornerRadius = resources.getDimension(R.dimen.pleos_surface_radius)
+        if (border != null) setStroke(resources.getDimensionPixelSize(R.dimen.pleos_button_stroke_width), context.getColor(border))
     }
 
     private fun actionLayout() = LayoutParams(LayoutParams.WRAP_CONTENT, dp(88)).apply {
         marginEnd = dp(16)
     }
 
-    private fun button(label: Int, viewId: Int): Button = object : Button(context) {
-        override fun setPressed(pressed: Boolean) {
-            super.setPressed(pressed)
-            if (!isAttachedToWindow) return
-            animate().cancel()
-            if (isInTouchMode && isInteractive() && ValueAnimator.areAnimatorsEnabled()) {
-                val scale = if (pressed) 0.97f else 1f
-                animate().scaleX(scale).scaleY(scale).setDuration(120).setInterpolator(easeOut).start()
-            } else {
-                scaleX = 1f
-                scaleY = 1f
-            }
-        }
-    }.apply {
+    private fun button(label: Int, viewId: Int): Button = Button(context).apply {
         id = viewId
         text = context.getString(label)
         isAllCaps = false
@@ -397,12 +524,27 @@ class MobiScreen(
         minimumWidth = dp(200)
         setPadding(dp(32), 0, dp(32), 0)
         val primary = viewId in setOf(R.id.connect, R.id.accept, R.id.next, R.id.speak)
-        setTextColor(context.getColor(if (primary) R.color.pleos_surface else R.color.pleos_text))
-        background = RippleDrawable(
-            ColorStateList.valueOf(context.getColor(R.color.pleos_ripple)),
-            surface(if (primary) R.color.pleos_text else R.color.pleos_surface, outlined = !primary),
-            null,
-        )
+        setTextColor(ColorStateList(arrayOf(intArrayOf(-android.R.attr.state_enabled),
+            intArrayOf(android.R.attr.state_pressed), intArrayOf()), intArrayOf(
+            context.getColor(if (primary) R.color.pleos_primary_text_disabled else R.color.pleos_secondary_text_disabled),
+            context.getColor(if (primary) R.color.pleos_primary_text_pressed else R.color.pleos_secondary_text_pressed),
+            context.getColor(if (primary) R.color.pleos_primary_text else R.color.pleos_secondary_text))))
+        val fill = if (primary) R.color.pleos_primary_fill else R.color.pleos_secondary_fill
+        val normalBorder = if (primary) fill else R.color.pleos_secondary_border
+        val pressed = if (primary) R.color.pleos_primary_pressed else R.color.pleos_secondary_pressed
+        val disabled = if (primary) R.color.pleos_primary_disabled else R.color.pleos_secondary_disabled
+        fun layered(border: Int, overlay: Int) = LayerDrawable(arrayOf(surface(fill, border),
+            ColorDrawable(context.getColor(overlay))))
+        backgroundTintList = null
+        background = StateListDrawable().apply {
+            setEnterFadeDuration(resources.getInteger(R.integer.pleos_press_enter_ms))
+            setExitFadeDuration(resources.getInteger(R.integer.pleos_press_exit_ms))
+            addState(intArrayOf(-android.R.attr.state_enabled),
+                layered(if (primary) disabled else R.color.pleos_secondary_border_disabled, disabled))
+            addState(intArrayOf(android.R.attr.state_pressed),
+                layered(if (primary) pressed else R.color.pleos_secondary_border_pressed, pressed))
+            addState(intArrayOf(), surface(fill, normalBorder))
+        }
         stateListAnimator = null
         elevation = 0f
     }

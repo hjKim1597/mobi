@@ -1,0 +1,8 @@
+# Fixed offline action speech belongs to the app, unlike captured microphone WAVs.
+!app/src/main/res/raw/action_*.wav
+# Local verification artifacts.
+/action-*.log
+/action-emulator-settings.json
+/action-evidence/
+/action-cleanup.json
+/action-audio-*.json

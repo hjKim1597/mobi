@@ -1,0 +1,12 @@
+[
+  {
+    "scenario": "action-reply",
+    "result": "PASS",
+    "flow": "reply",
+    "proposal": true,
+    "holdAtLeast12Seconds": true,
+    "terminal": "succeeded",
+    "privateContentHiddenDuringDrive": true,
+    "hiddenMs": 12.088417
+  }
+]

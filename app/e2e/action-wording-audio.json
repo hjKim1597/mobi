@@ -1,0 +1,223 @@
+{
+  "model": "@cf/myshell-ai/melotts",
+  "lang": "kr",
+  "version": "action-wording-v1",
+  "calls": 10,
+  "attempts": [
+    {
+      "id": "not_written_reply",
+      "attempt": 1,
+      "calls": 1,
+      "outcome": "failed"
+    },
+    {
+      "id": "not_written_reply",
+      "attempt": 2,
+      "calls": 1,
+      "outcome": "success"
+    },
+    {
+      "id": "not_written_calendar",
+      "attempt": 1,
+      "calls": 1,
+      "outcome": "success"
+    },
+    {
+      "id": "failed_reply",
+      "attempt": 1,
+      "calls": 1,
+      "outcome": "success"
+    },
+    {
+      "id": "failed_calendar",
+      "attempt": 1,
+      "calls": 1,
+      "outcome": "success"
+    },
+    {
+      "id": "unknown_calendar",
+      "attempt": 1,
+      "calls": 1,
+      "outcome": "success"
+    },
+    {
+      "id": "offer_reply",
+      "attempt": 1,
+      "calls": 1,
+      "outcome": "success"
+    },
+    {
+      "id": "offer_calendar",
+      "attempt": 1,
+      "calls": 1,
+      "outcome": "success"
+    },
+    {
+      "id": "unknown_generic",
+      "attempt": 1,
+      "calls": 1,
+      "outcome": "success"
+    },
+    {
+      "id": "demo_mail",
+      "attempt": 1,
+      "calls": 1,
+      "outcome": "success"
+    }
+  ],
+  "generatedAt": "2026-11-08T23:04:30.924Z",
+  "clips": {
+    "action_not_written_reply.wav": {
+      "text": "보내지 않았어요.",
+      "model": "@cf/myshell-ai/melotts",
+      "lang": "kr",
+      "version": "action-wording-v1",
+      "sampleRate": 44100,
+      "sourceAttempt": 2,
+      "channels": 1,
+      "bitsPerSample": 16,
+      "bytes": 195942,
+      "durationSeconds": 2.221065759637188,
+      "textSha256": "79884edf46feda0ccaa4fdac6e89fa7ff2dcb754f90cd5a15909c8e97dee08dd",
+      "sha256": "98c70dea7d99c317f7884f8a4af86c5cb80be6964d962366a46687007fae7318",
+      "sourceSha256": "98c70dea7d99c317f7884f8a4af86c5cb80be6964d962366a46687007fae7318",
+      "sourceSampleRate": 44100,
+      "resample": "original MeloTTS WAV preserved byte-for-byte at 44100 Hz",
+      "responseAudioSha256": "98c70dea7d99c317f7884f8a4af86c5cb80be6964d962366a46687007fae7318",
+      "bytePreserved": true
+    },
+    "action_not_written_calendar.wav": {
+      "text": "일정을 추가하지 않았어요.",
+      "model": "@cf/myshell-ai/melotts",
+      "lang": "kr",
+      "version": "action-wording-v1",
+      "sampleRate": 44100,
+      "sourceAttempt": 1,
+      "channels": 1,
+      "bitsPerSample": 16,
+      "bytes": 252262,
+      "durationSeconds": 2.8596145124716554,
+      "textSha256": "2f105d9de8b6da59ce189b317c472c6f54e84d46ac9516a09ba64c6f34ff7005",
+      "sha256": "167493d50111b4fd3e89fd6ef5de2b3bd5eb7b467a2b0b7c1e3a47d6a9f25d12",
+      "sourceSha256": "167493d50111b4fd3e89fd6ef5de2b3bd5eb7b467a2b0b7c1e3a47d6a9f25d12",
+      "sourceSampleRate": 44100,
+      "resample": "original MeloTTS WAV preserved byte-for-byte at 44100 Hz",
+      "responseAudioSha256": "167493d50111b4fd3e89fd6ef5de2b3bd5eb7b467a2b0b7c1e3a47d6a9f25d12",
+      "bytePreserved": true
+    },
+    "action_failed_reply.wav": {
+      "text": "보내지 못했어요.",
+      "model": "@cf/myshell-ai/melotts",
+      "lang": "kr",
+      "version": "action-wording-v1",
+      "sampleRate": 44100,
+      "sourceAttempt": 1,
+      "channels": 1,
+      "bitsPerSample": 16,
+      "bytes": 197990,
+      "durationSeconds": 2.244285714285714,
+      "textSha256": "419b2f68f1585b26dd0f330a863009d2b98e83c1892e1dc77e8d60049aa6038d",
+      "sha256": "83f915290be1ea4eec8ffffe144cbc0a7f2992856a1e21ca1e3976ae9d359595",
+      "sourceSha256": "83f915290be1ea4eec8ffffe144cbc0a7f2992856a1e21ca1e3976ae9d359595",
+      "sourceSampleRate": 44100,
+      "resample": "original MeloTTS WAV preserved byte-for-byte at 44100 Hz",
+      "responseAudioSha256": "83f915290be1ea4eec8ffffe144cbc0a7f2992856a1e21ca1e3976ae9d359595",
+      "bytePreserved": true
+    },
+    "action_failed_calendar.wav": {
+      "text": "일정을 추가하지 못했어요.",
+      "model": "@cf/myshell-ai/melotts",
+      "lang": "kr",
+      "version": "action-wording-v1",
+      "sampleRate": 44100,
+      "sourceAttempt": 1,
+      "channels": 1,
+      "bitsPerSample": 16,
+      "bytes": 257382,
+      "durationSeconds": 2.9176643990929705,
+      "textSha256": "e8f4900b884ba1762e2306a343789ee0539edc4f94cdcc55eeb123cddf932878",
+      "sha256": "7f55a314d0b2c7f4776199a1e742543baa7625438c16eeae7d7d8445f6e768f2",
+      "sourceSha256": "7f55a314d0b2c7f4776199a1e742543baa7625438c16eeae7d7d8445f6e768f2",
+      "sourceSampleRate": 44100,
+      "resample": "original MeloTTS WAV preserved byte-for-byte at 44100 Hz",
+      "responseAudioSha256": "7f55a314d0b2c7f4776199a1e742543baa7625438c16eeae7d7d8445f6e768f2",
+      "bytePreserved": true
+    },
+    "action_unknown_calendar.wav": {
+      "text": "처리 결과를 확인하지 못했어요. 중복을 막기 위해 다시 추가하지 않을게요.",
+      "model": "@cf/myshell-ai/melotts",
+      "lang": "kr",
+      "version": "action-wording-v1",
+      "sampleRate": 44100,
+      "sourceAttempt": 1,
+      "channels": 1,
+      "bitsPerSample": 16,
+      "bytes": 638624,
+      "durationSeconds": 7.240136054421769,
+      "textSha256": "50cfdbd01f5a986a74c530660e57c983300912bd5b63516e3b943d0ed50c1c56",
+      "sha256": "5d3d85c249fb0d65826efb0918cf02dbe02cf8c0ba5ea9b642944083a799e6db",
+      "sourceSha256": "5d3d85c249fb0d65826efb0918cf02dbe02cf8c0ba5ea9b642944083a799e6db",
+      "sourceSampleRate": 44100,
+      "resample": "original MeloTTS WAV preserved byte-for-byte at 44100 Hz",
+      "responseAudioSha256": "5d3d85c249fb0d65826efb0918cf02dbe02cf8c0ba5ea9b642944083a799e6db",
+      "bytePreserved": true
+    },
+    "action_unknown_generic.wav": {
+      "text": "처리 결과를 확인하지 못했어요. 중복을 막기 위해 다시 처리하지 않을게요.",
+      "model": "@cf/myshell-ai/melotts",
+      "lang": "kr",
+      "version": "action-wording-v1",
+      "sampleRate": 44100,
+      "sourceAttempt": 1,
+      "channels": 1,
+      "bitsPerSample": 16,
+      "bytes": 644768,
+      "durationSeconds": 7.309795918367347,
+      "textSha256": "7a1e3fe61469fcce30a7fb32b7dc1341056c3e30f26cb26c5403cf4dfe018144",
+      "sha256": "91ebd5f26cbdee2e34cf72621507a2c2bb5a523e67f18899b2dee75f722a602b",
+      "sourceSha256": "91ebd5f26cbdee2e34cf72621507a2c2bb5a523e67f18899b2dee75f722a602b",
+      "sourceSampleRate": 44100,
+      "resample": "original MeloTTS WAV preserved byte-for-byte at 44100 Hz",
+      "responseAudioSha256": "91ebd5f26cbdee2e34cf72621507a2c2bb5a523e67f18899b2dee75f722a602b",
+      "bytePreserved": true
+    },
+    "action_demo_calendar_offer.wav": {
+      "text": "일정 내용을 확인할까요?",
+      "model": "@cf/myshell-ai/melotts",
+      "lang": "kr",
+      "version": "action-wording-v1",
+      "sampleRate": 44100,
+      "sourceAttempt": 1,
+      "channels": 1,
+      "bitsPerSample": 16,
+      "bytes": 248166,
+      "durationSeconds": 2.813174603174603,
+      "textSha256": "0699c579c5b0333cb2fa9cd7ae1547a1d4f0c7e3baa8da0c99a501b391dc2bab",
+      "sha256": "12763ae9142d5fc94cc2978d517c257a9e39bd64f5c42cdbdae0e8c752beb540",
+      "sourceSha256": "12763ae9142d5fc94cc2978d517c257a9e39bd64f5c42cdbdae0e8c752beb540",
+      "sourceSampleRate": 44100,
+      "resample": "original MeloTTS WAV preserved byte-for-byte at 44100 Hz",
+      "responseAudioSha256": "12763ae9142d5fc94cc2978d517c257a9e39bd64f5c42cdbdae0e8c752beb540",
+      "bytePreserved": true
+    },
+    "action_demo_mail.wav": {
+      "text": "가상 메일이 있어요. 가상 담당자가 회의 시간을 확인해 달라고 했어요. 회신 내용을 작성할까요?",
+      "model": "@cf/myshell-ai/melotts",
+      "lang": "kr",
+      "version": "action-wording-v1",
+      "sampleRate": 44100,
+      "sourceAttempt": 1,
+      "channels": 1,
+      "bitsPerSample": 16,
+      "bytes": 837594,
+      "durationSeconds": 9.496031746031745,
+      "textSha256": "693e3df0434610a229135358b3f6438d07c6822262f04efa6db0d33244da7703",
+      "sha256": "bd0c48327cc8651b007cc74bcadb3bb1fceeb75bb34ede4dbc9c45c4bc3dbad6",
+      "sourceSha256": "bd0c48327cc8651b007cc74bcadb3bb1fceeb75bb34ede4dbc9c45c4bc3dbad6",
+      "sourceSampleRate": 44100,
+      "resample": "original MeloTTS WAV preserved byte-for-byte at 44100 Hz",
+      "responseAudioSha256": "bd0c48327cc8651b007cc74bcadb3bb1fceeb75bb34ede4dbc9c45c4bc3dbad6",
+      "bytePreserved": true
+    }
+  }
+}

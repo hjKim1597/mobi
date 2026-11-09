@@ -72,8 +72,26 @@ function normalizeNumbers(text: string): string {
   return value;
 }
 
+function hasUnsafeActionNumber(text: string): boolean {
+  return /[0-9]{7}|(?:^|[^0-9])0[0-9]|[\p{Script=Latin}][0-9]|[0-9][\p{Script=Latin}]/u.test(text);
+}
+
+/** Shared admission policy for approved reply bodies and calendar titles. */
+export function isSafeReplyBody(text: string): boolean {
+  return [...text].length > 0 && [...text].length <= 120
+    && /^[\p{Script=Hangul}A-Za-z0-9 .,?!'"]+$/u.test(text)
+    && !hasUnsafeActionNumber(text)
+    && !/[0-9][.,?!'"]|[.,?!'"][0-9]/u.test(text);
+}
+
 /** Produces plain Korean text suitable for passing to a speech synthesis adapter. */
-export function sanitizeTtsText(text: string): string {
+export function sanitizeTtsText(text: string, mode: 'general' | 'reply_readback' = 'general'): string {
+  if (mode === 'reply_readback') {
+    // Approval readback must not remove quotes, punctuation, or word boundaries.
+    // Both action kinds admit their user text with the shared policy first.
+    if (!/^[\p{L}\p{M}\p{N} .,?!'"]+$/u.test(text) || hasUnsafeActionNumber(text)) throw Error('Unreadable reply readback');
+    return text.replace(/[0-9]+/g, run => integerText(run));
+  }
   let value = text
     .replace(/(\d)️⃣/gu, '$1')
     .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, ' ')

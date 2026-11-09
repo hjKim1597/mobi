@@ -1,0 +1,7 @@
+[
+  {
+    "scenario": "action-reply",
+    "result": "FAIL",
+    "reason": "Timed out: fixture pairing and today cache"
+  }
+]

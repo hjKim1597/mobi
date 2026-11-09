@@ -23,6 +23,8 @@ class VoiceAdaptersTest {
   val recording=java.util.concurrent.atomic.AtomicBoolean(true)
   val callbacks=java.util.concurrent.atomic.AtomicInteger()
   val voiceStarts=java.util.concurrent.atomic.AtomicInteger()
+  val readyCalls=java.util.concurrent.atomic.AtomicInteger()
+  val stateAtReady=java.util.concurrent.atomic.AtomicInteger(-1)
   val stateAtResult=java.util.concurrent.atomic.AtomicInteger(-1)
   val received=java.util.concurrent.atomic.AtomicReference<Result<AudioClip>>()
   val done=CountDownLatch(1)
@@ -38,9 +40,11 @@ class VoiceAdaptersTest {
   try {
    input.start(CaptureMode.QUESTION,{true},{voiceStarts.incrementAndGet()},{result->
     stateAtResult.set(native.get().state);received.set(result);callbacks.incrementAndGet();done.countDown()
-   })
+   },ready={stateAtReady.set(native.get().recordingState);readyCalls.incrementAndGet()})
    assertTrue("unknown configuration capture terminates",done.await(4,TimeUnit.SECONDS))
    assertTrue("positive reads from recording native AudioRecord",reads.get()>0 && recording.get())
+   assertEquals("ready is delivered once after native recording starts",1,readyCalls.get())
+   assertEquals(android.media.AudioRecord.RECORDSTATE_RECORDING,stateAtReady.get())
    assertTrue("unknown state must not reject voiced PCM",received.get().isSuccess)
    val clip=received.get().getOrThrow()
    assertTrue(clip.voiced);assertEquals(1,voiceStarts.get());assertEquals(1,callbacks.get())
@@ -49,6 +53,33 @@ class VoiceAdaptersTest {
    val bytes=WavAudio(Base64.getEncoder().encodeToString(clip.wav)).bytes()
    assertEquals(25644,bytes.size)
   } finally {received.get()?.getOrNull()?.wav?.fill(0);input.close();activity.close()}
+ }
+ @Test fun holdKeepsTheSameRecorderReadyBeyondTenSecondsOfSilentPcm() {
+  val instrumentation=InstrumentationRegistry.getInstrumentation()
+  val context=instrumentation.targetContext
+  instrumentation.uiAutomation.grantRuntimePermission(context.packageName,android.Manifest.permission.RECORD_AUDIO)
+  val reads=java.util.concurrent.atomic.AtomicInteger()
+  val creates=java.util.concurrent.atomic.AtomicInteger()
+  val readyCalls=java.util.concurrent.atomic.AtomicInteger()
+  val onset=java.util.concurrent.atomic.AtomicBoolean(false)
+  val done=CountDownLatch(1)
+  val native=java.util.concurrent.atomic.AtomicReference<android.media.AudioRecord>()
+  val input=RecorderInput(context,createRecorder={
+   creates.incrementAndGet()
+   android.media.AudioRecord(android.media.MediaRecorder.AudioSource.MIC,16000,
+    android.media.AudioFormat.CHANNEL_IN_MONO,android.media.AudioFormat.ENCODING_PCM_16BIT,6400).also{native.set(it)}
+  },read={_,samples->samples.fill(if(reads.incrementAndGet()>600) 1000 else 0);samples.size},silenced={false})
+  val activity=androidx.test.core.app.ActivityScenario.launch(dev.mobi.ui.MainActivity::class.java)
+  try {
+   input.start(CaptureMode.HOLD,{true},{onset.set(true);input.cancelCurrent();done.countDown()},
+    {it.getOrNull()?.wav?.fill(0);done.countDown()},ready={
+     assertEquals(android.media.AudioRecord.RECORDSTATE_RECORDING,native.get().recordingState)
+     readyCalls.incrementAndGet()
+    })
+   assertTrue("hold reaches speech after twelve seconds of silent PCM",done.await(4,TimeUnit.SECONDS))
+   assertTrue("silence must not end the hold capture",onset.get())
+   assertTrue(reads.get()>600);assertEquals(1,creates.get());assertEquals(1,readyCalls.get())
+  } finally {input.close();activity.close()}
  }
  @Test fun silencedRecorderDefersWithoutUploadAndReleasesMicrophone() {
   recorderFailure("silenced")
@@ -108,7 +139,7 @@ class VoiceAdaptersTest {
    {effects++;it()},{events+=it},{},{phase=it})
   val activity=androidx.test.core.app.ActivityScenario.launch(dev.mobi.ui.MainActivity::class.java)
   try {
-   handler.post{session.listen(dev.mobi.net.Operation(1,1,1,dev.mobi.net.RequestDeadline(clock,clock.elapsedRealtimeMillis()+6000)),CaptureMode.QUESTION)}
+   handler.post{session.listen(dev.mobi.net.Operation(1,1,1,dev.mobi.net.RequestDeadline(clock,clock.elapsedRealtimeMillis()+8000)),CaptureMode.QUESTION)}
    assertTrue("$fault/$revokeAtRead capture terminates",captured.await(4,TimeUnit.SECONDS))
    val idle=CountDownLatch(1);handler.post{idle.countDown()};assertTrue(idle.await(3,TimeUnit.SECONDS))
    assertTrue("fault was injected into a recording AudioRecord",reads.get()>0 && recording.get())

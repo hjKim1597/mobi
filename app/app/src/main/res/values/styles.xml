@@ -1,11 +1,16 @@
 <resources>
-    <style name="AppTheme" parent="android:style/Theme.Material.NoActionBar">
+    <style name="AppTheme" parent="android:style/Theme.DeviceDefault.DayNight">
+        <item name="android:windowActionBar">false</item>
+        <item name="android:windowNoTitle">true</item>
         <item name="android:fontFamily">sans</item>
-        <item name="android:colorAccent">@color/pleos_text</item>
+        <item name="android:colorAccent">@color/pleos_active</item>
+        <item name="android:colorBackground">@color/pleos_surface</item>
+        <item name="android:textColorPrimary">@color/pleos_text</item>
+        <item name="android:textColorSecondary">@color/pleos_secondary</item>
         <item name="android:statusBarColor">@color/pleos_surface</item>
         <item name="android:navigationBarColor">@color/pleos_surface</item>
-        <item name="android:windowLightStatusBar">true</item>
-        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:windowLightStatusBar">@bool/pleos_light_system_bars</item>
+        <item name="android:windowLightNavigationBar">@bool/pleos_light_system_bars</item>
         <item name="android:windowBackground">@color/pleos_surface</item>
         <item name="android:windowActionModeOverlay">true</item>
     </style>

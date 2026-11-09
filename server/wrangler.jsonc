@@ -5,7 +5,7 @@
   "compatibility_date": "2025-08-29",
   "ai": { "binding": "AI" },
   "vars": {
-    "DEVICE_DAILY_CAP": "20",
+    "DEVICE_DAILY_CAP": "100",
     "GLOBAL_DAILY_CAP": "250",
     "PUBLIC_ORIGIN": "https://mobi-dev.mobi-car.workers.dev"
   },

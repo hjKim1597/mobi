@@ -21,8 +21,10 @@ data class BriefingRequest(val tripId: String, val remainingSeconds: Int?)
 data class BriefingResponse(val briefingId: String, val tripId: String, val bucket: String, val text: String, val audio: WavAudio)
 data class ConfirmMatch(val label: String, val action: String, val mode: String)
 data class ConfirmResponse(val transcript: String, val match: ConfirmMatch)
-data class Sentence(val text: String, val audio: WavAudio)
-data class TurnResponse(val turnId: String, val transcript: String, val sentences: List<Sentence>)
+data class Sentence(val text: String, val audio: WavAudio) { override fun toString() = "Sentence([redacted])" }
+data class ActionProposalPending(val actionId: String, val version: Int)
+data class TurnResponse(val turnId: String, val transcript: String, val sentences: List<Sentence>, val actionProposal: ActionProposal? = null,
+    val actionProposalPending: ActionProposalPending? = null)
 class ApiFailure(val status: Int, val code: String, val retryAfterSeconds: Long = 0) : Exception("HTTP $status $code")
 
 data class WavAudio(val data: String, val mimeType: String = "audio/wav") {
@@ -108,7 +110,12 @@ object ApiContract {
         val transcript = j.text("transcript")
         val sentences = (0 until a.length()).map { val s = a.getJSONObject(it); Sentence(s.text("text"), audio(s.getJSONObject("audio"))) }
         require(transcript.isNotEmpty() || sentences.isEmpty())
-        return TurnResponse(uuid(j.text("turnId")), transcript, sentences)
+        val proposal = if (!j.has("actionProposal") || j.isNull("actionProposal")) null else ActionApiContract.proposal(j.getJSONObject("actionProposal"))
+        val pending = if (!j.has("actionProposalPending") || j.isNull("actionProposalPending")) null else j.getJSONObject("actionProposalPending").let {
+            ActionProposalPending(uuid(it.text("actionId")), it.number("version")).also { value -> require(value.version > 0) }
+        }
+        require(proposal == null || pending == null)
+        return TurnResponse(uuid(j.text("turnId")), transcript, sentences, proposal, pending)
     }
     fun audioJson(v: WavAudio) = JSONObject().put("data", v.data).put("mimeType", v.mimeType)
     fun briefingJson(v: BriefingRequest) = JSONObject().put("tripId", v.tripId).put("remainingSeconds", v.remainingSeconds ?: JSONObject.NULL)

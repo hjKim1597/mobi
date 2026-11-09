@@ -20,6 +20,14 @@ import android.util.Log
 import dev.mobi.dialog.DialogState
 import dev.mobi.dialog.DialogStateMachine
 import dev.mobi.dialog.SafetyGate
+import dev.mobi.dialog.ActionStage
+import dev.mobi.dialog.ActionView
+import dev.mobi.voice.ActionSession
+import dev.mobi.voice.ActionCancelReason
+import dev.mobi.voice.ApiActionGateway
+import dev.mobi.voice.ActionAudioOutput
+import dev.mobi.voice.ActionAudioAssets
+import dev.mobi.voice.DemoActionGateway
 import dev.mobi.trip.Clock
 import dev.mobi.trip.PreferencesTripStore
 import dev.mobi.trip.TripDetector
@@ -58,6 +66,8 @@ data class MobiViewState(
     val voicePhase: String = "IDLE",
     val message: String = "",
     val needsConnection: Boolean = false,
+    val action: ActionView? = null,
+    val quietMail: Boolean = false,
 
 )
 
@@ -92,6 +102,17 @@ class MobiService : Service() {
     private lateinit var failureAudioAssets: FailureAudioAssets
     private lateinit var focus: AudioFocus
     internal lateinit var voice: VoiceSession
+    private lateinit var actions: ActionSession
+    private lateinit var demoActions: ActionSession
+    private lateinit var actionOutput: ActionAudioOutput
+    private lateinit var demoActionOutput: ActionAudioOutput
+    private var actionInput: dev.mobi.voice.VoiceInput? = null
+    private var briefingForMail = false
+    private val quietMailSetting = dev.mobi.trip.QuietMailSetting()
+    private var quietMailLastGear = Gear.UNKNOWN
+    private var quietMailEndAt: Long? = null
+    private var quietMailEndTask: Runnable? = null
+    private val currentActions get() = if (demo) demoActions else actions
     private lateinit var pairing: PairingController
     private lateinit var navi: NaviSource
     private var pairingView = PairingView()
@@ -143,6 +164,18 @@ class MobiService : Service() {
             onState {
                 if (!initialized) return@onState
                 if (!SafetyGate.interactive(snapshot)) pairing.cancel()
+                if (::actions.isInitialized) currentActions.safetyChanged()
+                if (snapshot.gear != quietMailLastGear) {
+                    val now = clock.elapsedRealtimeMillis()
+                    val endAt = quietMailSetting.onGear(snapshot.gear, now)
+                    quietMailLastGear = snapshot.gear
+                    if (snapshot.gear != Gear.PARK) {
+                        quietMailEndTask?.let(worker::removeCallbacks)
+                        quietMailEndTask = null
+                        quietMailEndAt = null
+                    }
+                    if (endAt != null) scheduleQuietMailReset(endAt)
+                }
                 val knock = detector.onGear(snapshot.gear)
                 if (knock) beginLiveKnock()
                 if (!knock && (snapshot.gear in setOf(Gear.DRIVE, Gear.REVERSE, Gear.NEUTRAL) || snapshot.uxKnown && snapshot.restricted)) {
@@ -233,10 +266,13 @@ class MobiService : Service() {
         onState {
             if (!SafetyGate.interactive(vehicle)) return@onState
             cue.stop()
+            if (::demoActions.isInitialized) demoActions.close()
+            val returningFromDemo = demo
             demo = false
             if (BuildConfig.DEBUG) debugMeasurementOperation = false
             liveEnabled = true
             voice.cancel()
+            if (returningFromDemo && ::actions.isInitialized) actions.resume()
             refreshToday()
             publish()
         }
@@ -246,7 +282,10 @@ class MobiService : Service() {
         if (!SafetyGate.interactive(vehicle)) return
         onState {
             if (!SafetyGate.interactive(vehicle)) return@onState
+            if (::actions.isInitialized && actions.busy) { actions.interrupt(); return@onState }
+            actions.suspend()
             demo = true
+            initializeDemoActions()
             if (BuildConfig.DEBUG) debugMeasurementOperation = false
             liveEnabled = false
             pairing.cancel()
@@ -259,6 +298,7 @@ class MobiService : Service() {
                 onState {
                     demoDialog = DialogStateMachine()
                     demoDialog.startTrip(demoSequence--, clock.elapsedRealtimeMillis())
+                    demoActions.begin(demoDialog.tripId, demoDialog.generation)
                     playKnock()
                 }
             }
@@ -304,6 +344,7 @@ class MobiService : Service() {
     }
 
     private fun beginLiveKnock() {
+        briefingForMail = false
         if (BuildConfig.DEBUG) debugMeasurementOperation = false
         if (demo) {
             // Keep the live trip aligned with the vehicle without interrupting a demo.
@@ -312,6 +353,7 @@ class MobiService : Service() {
             return
         }
         liveDialog.startTrip(detector.snapshot.tripId, clock.elapsedRealtimeMillis())
+        beginActions()
         today = cache?.load()
         val op = Operation(liveDialog.tripId, liveDialog.generation, ++ioSerial, RequestDeadline(ioClock, ioClock.elapsedRealtimeMillis() + 6000))
         Log.i(TAG, "KNOCK trip=${op.tripId} demo=false atMs=${SystemClock.elapsedRealtime()}")
@@ -353,7 +395,7 @@ class MobiService : Service() {
             main.post { foreground(false) }
         }
         if (!demo && detector.snapshot.dialogTerminal != liveDialog.state.name) detector.setDialogTerminal(liveDialog.state.name)
-        val state = MobiViewState(vehicle, activeDialog.state, activeDialog.tripId, demo, micReady, if (demo) null else today, pairingView, voicePhase, message, needsConnection)
+        val state = MobiViewState(vehicle, activeDialog.state, activeDialog.tripId, demo, micReady, if (demo) null else today, pairingView, voicePhase, message, needsConnection, actionView(), quietMailSetting.enabled)
         main.post {
             if (destroyed) return@post
             deliver(state.copy(vehicle = vehicle))
@@ -375,6 +417,7 @@ class MobiService : Service() {
         put("remainingSeconds", remainingSeconds ?: JSONObject.NULL)
         put("hasToday", state.today != null); put("eventCount", state.today?.events?.size ?: -1)
         put("needsConnection", needsConnection)
+        if (::actions.isInitialized) { put("actionStage", currentActions.dialog.stage.name); put("actionOutcome", currentActions.outcome ?: JSONObject.NULL) }
     }
 
     internal fun reportState() { onState { publish() } }
@@ -436,7 +479,8 @@ class MobiService : Service() {
         today = cache?.load()
         recorder = RecorderInput(this)
         output = ServerAudioOutput(this)
-        focus = AudioFocus(this, { output.pause(); recorder.cancelCurrent(); if (::voice.isInitialized) voice.pauseInputImmediately(); cue.stop() }, { active -> onState { voice.onNavigation(active) } }, { onState {
+        focus = AudioFocus(this, { output.pause(); recorder.cancelCurrent(); if (::voice.isInitialized) voice.pauseInputImmediately(); cue.stop() }, { active -> onState { voice.onNavigation(active); if (active && ::actions.isInitialized) currentActions.interrupt(ActionCancelReason.FOCUS) } }, { onState {
+            if (::actions.isInitialized) currentActions.interrupt(ActionCancelReason.FOCUS)
             if (voice.operation != null) { voice.cancel(); voiceEvent("deferred") }
         } })
         output.canStart = { !destroyed && !focus.refresh() }
@@ -468,7 +512,16 @@ class MobiService : Service() {
                     publish()
                 } else applySentence(intent)
             }, { phase -> voicePhase = phase; if (phase == "SPEAKING") cue.stop(); if (initialized) publish() },
-            ::localFailureAudio)
+            ::localFailureAudio, { operation, proposal -> onState {
+                if (demo || liveDialog.tripId != operation.tripId || liveDialog.generation != operation.generation) return@onState
+                beginActions()
+                actions.receive(proposal, kindHint = "calendar_insert")
+            } }, actionProposalPending = { operation, pending -> onState {
+                if (demo || liveDialog.tripId != operation.tripId || liveDialog.generation != operation.generation) return@onState
+                beginActions()
+                actions.receivePending(pending.actionId, pending.version, operation.tripId, operation.generation)
+            } })
+        initializeActions()
         pairing = PairingController(ioClock, { System.currentTimeMillis() }, { credentials },
             { deadline, cb -> api.register(deadline) { result -> onState { cb(result) } } },
             { value -> auth.save(value); credentials = value; cache = TodayCache(this, serverBase, value.deviceId) },
@@ -516,12 +569,152 @@ class MobiService : Service() {
                     }
                 }
             }
+            "briefing-started" -> briefingForMail = true
             "voice-started" -> liveDialog.voiceStarted(liveDialog.tripId, liveDialog.generation)
-            "deferred" -> { liveDialog.defer(liveDialog.tripId, liveDialog.generation); message = getString(R.string.not_now) }
-            "complete" -> { liveDialog.complete(liveDialog.tripId, liveDialog.generation); message = getString(R.string.briefing_complete) }
+            "deferred" -> { briefingForMail = false; liveDialog.defer(liveDialog.tripId, liveDialog.generation); message = getString(R.string.not_now) }
+            "complete" -> {
+                liveDialog.complete(liveDialog.tripId, liveDialog.generation); message = getString(R.string.briefing_complete)
+                if (briefingForMail && !demo) { briefingForMail = false; beginActions(); actions.afterBriefing(remainingSeconds) }
+            }
         }
-        if (event == "complete" || event == "deferred") focus.release()
+        if ((event == "complete" || event == "deferred") && (!::actions.isInitialized || !currentActions.busy)) focus.release()
         publish()
+    }
+
+    private fun beginActions() {
+        if (!::actions.isInitialized) return
+        val prefs = getSharedPreferences(actionPreferenceName(), MODE_PRIVATE)
+        actions.begin(liveDialog.tripId, liveDialog.generation, prefs.getLong("offeredTrip", Long.MIN_VALUE) == liveDialog.tripId)
+    }
+
+    private fun actionPreferenceName() = "actions-" + ApiContract.sha256(serverBase.toByteArray()).take(16)
+
+    private fun initializeActions() {
+        actionOutput = ActionAudioOutput { !destroyed && !focus.refresh() }
+        actionInput = voiceInputFactory?.invoke() ?: RecorderInput(this)
+        val assets = ActionAudioAssets(this)
+        val prefs = getSharedPreferences(actionPreferenceName(), MODE_PRIVATE)
+        actions = ActionSession(ioClock, { System.currentTimeMillis() }, ApiActionGateway(api) { credentials },
+            requireNotNull(actionInput), actionOutput, ::schedule, { onState(it) },
+            { !destroyed && !demo && micReady && hasMicrophonePermission() && !liveDialog.muted },
+            { focus.acquire() }, { if (!demo && initialized) { voicePhase = actions.voicePhase; publish() } },
+            { id -> prefs.edit().apply { if (id == null) remove("activeId") else putString("activeId", id) }.commit() },
+            { wireTripId(it.toString()) }, assets::get,
+            offerConsumed = { prefs.edit().putLong("offeredTrip", it).commit() },
+            buttonPermitted = { !demo && SafetyGate.interactive(vehicle) },
+            quietMail = { quietMailSetting.enabled }, diagnostic = { Log.i(TAG, it) })
+        actions.offerConfirm = { audio, cb ->
+            val c = credentials
+            if (c == null) unavailable(cb) else api.confirm(audio,c,api.deadline(),cb)
+        }
+        initializeDemoActions()
+        schedule(0) {
+            beginActions()
+            prefs.getString("activeId", null)?.let { actions.restore(it) }
+        }
+    }
+
+    fun setQuietMail(tripId: Long, enabled: Boolean) {
+        onState {
+            if (demo || tripId != liveDialog.tripId || !SafetyGate.interactive(vehicle) ||
+                !::actions.isInitialized || actions.busy || actions.voicePhase != "IDLE") return@onState
+            quietMailSetting.set(enabled, clock.elapsedRealtimeMillis())
+            publish()
+        }
+    }
+
+    private fun scheduleQuietMailReset(parkedAtMillis: Long) {
+        quietMailEndAt = parkedAtMillis
+        val task = Runnable {
+            val now = clock.elapsedRealtimeMillis()
+            if (quietMailEndAt == parkedAtMillis && vehicle.gear == Gear.PARK &&
+                quietMailSetting.finishTrip(parkedAtMillis, now)) publish()
+            if (quietMailEndAt == parkedAtMillis) {
+                quietMailEndAt = null
+                quietMailEndTask = null
+            }
+        }
+        quietMailEndTask = task
+        worker.postDelayed(task, dev.mobi.trip.TripDetector.PARK_THRESHOLD_MILLIS)
+    }
+
+    private fun initializeDemoActions() {
+        if (::demoActions.isInitialized) demoActions.close()
+        if (::demoActionOutput.isInitialized) demoActionOutput.close()
+        val assets = ActionAudioAssets(this)
+        demoActionOutput = ActionAudioOutput { !destroyed && !focus.refresh() }
+        val noInput = object : dev.mobi.voice.VoiceInput {
+            override fun start(mode: CaptureMode, allowed: () -> Boolean, voiceStarted: () -> Unit,
+                result: (Result<dev.mobi.voice.AudioClip>) -> Unit) = CancelHandle {}
+            override fun close() {}
+        }
+        demoActions = ActionSession(ioClock, { System.currentTimeMillis() }, DemoActionGateway(assets),
+            noInput, demoActionOutput, ::schedule, { onState(it) }, { false }, { focus.acquire() },
+            { if (demo && initialized) { voicePhase = demoActions.voicePhase; publish() } }, {}, { "demo-$it" }, assets::get, demo = true, buttonPermitted = { demo && SafetyGate.interactive(vehicle) }, diagnostic = { Log.i(TAG, it) })
+    }
+
+    private fun actionView(): ActionView? {
+        if (!::actions.isInitialized) return null
+        val session = currentActions
+        val stage = session.dialog.stage
+        if (stage == ActionStage.IDLE) return null
+        val display = session.proposal?.display ?: session.candidate?.display
+        val title = when (stage) {
+            ActionStage.OFFER -> display?.subject ?: "메일 확인"
+            ActionStage.HOLDING -> "취소할 수 있어요"
+            ActionStage.RESULT -> if (session.quietMailNotice) display?.subject ?: "메일이 도착했어요" else "처리 결과"
+            ActionStage.UNKNOWN -> "처리 결과"
+            ActionStage.DICTATING -> "답장 내용을 말씀해 주세요"
+            ActionStage.CLARIFYING -> "일정 시간을 확인해 주세요"
+            else -> if (session.kind == "mail_reply") "회신 내용 확인" else "일정 내용 확인"
+        }
+        val detail = when (stage) {
+            ActionStage.RESULT -> if (session.quietMailNotice) listOfNotNull(
+                display?.sender, display?.subject, display?.summary, session.resultText,
+            ).joinToString("\n") else session.resultText
+            ActionStage.UNKNOWN -> session.resultText
+            ActionStage.HOLDING -> "십 초 동안 취소할 수 있어요."
+            ActionStage.READBACK, ActionStage.AWAITING_APPROVAL -> session.proposal?.sentences?.joinToString("\n") { it.text }.orEmpty()
+            else -> listOfNotNull(display?.sender,display?.subject,display?.summary).joinToString("\n")
+        }
+        return ActionView(when (stage) {
+            ActionStage.OFFER -> "offer"
+            ActionStage.DICTATING -> "dictation"
+            ActionStage.READBACK -> "readback"
+            ActionStage.AWAITING_APPROVAL -> "approval"
+            ActionStage.HOLDING -> "holding"
+            ActionStage.CLARIFYING -> "clarification"
+            ActionStage.RESULT, ActionStage.UNKNOWN -> "result"
+            else -> "processing"
+        }, session.kind, title, detail, session.kind == "mail_reply" && session.candidate?.canReply == true,
+            session.candidate?.canAddCalendar == true, session.readbackFinished, demo, session.dialog.token().toString())
+    }
+
+    fun actionCommand(command: String, tripId: Long, identity: String? = null) {
+        if (!SafetyGate.interactive(vehicle)) return
+        onState {
+            if (!SafetyGate.interactive(vehicle) || activeDialog.tripId != tripId) return@onState
+            val session = currentActions
+            if (identity != null && identity != session.dialog.token().toString()) return@onState
+            if (session.dialog.tripId != activeDialog.tripId) session.begin(activeDialog.tripId,activeDialog.generation)
+            when (command) {
+                "action_reply" -> session.acceptOffer(false)
+                "action_calendar" -> session.acceptOffer(true)
+                "action_approve" -> session.approveButton()
+                "action_cancel" -> session.cancel()
+                "action_decline" -> session.decline()
+                "action_demo_mail" -> if (demo) session.afterBriefing(null)
+                "action_demo_voice" -> if (demo) session.demoVoice()
+                "action_demo_dictate" -> if (demo) session.demoDictate()
+            }
+            publish()
+        }
+    }
+
+    internal fun debugActionScan() {
+        check(BuildConfig.DEBUG)
+        if (demo) return
+        voice.cancel(); beginActions(); actions.afterBriefing(remainingSeconds)
     }
 
     private fun wireTripId(tripId: String) = "${bootCount ?: -1}-$tripId"
@@ -683,7 +876,10 @@ class MobiService : Service() {
         onState {
             if (demo || !activityVisible || !SafetyGate.interactive(vehicle) || !micReady || credentials == null || needsConnection || liveDialog.muted) return@onState
             if (BuildConfig.DEBUG) debugMeasurementOperation = false
+            if (::actions.isInitialized && actions.busy) return@onState
+            briefingForMail = false
             liveDialog.question()
+            beginActions()
             val op = Operation(liveDialog.tripId, liveDialog.generation, ++ioSerial, RequestDeadline(ioClock, ioClock.elapsedRealtimeMillis() + 6000))
             voice.listen(op, CaptureMode.QUESTION)
             publish()
@@ -731,6 +927,7 @@ class MobiService : Service() {
         check(BuildConfig.DEBUG)
         ApiClient(url, true, ioClock).close() // Validate before discarding the current runtime.
         networkGeneration++
+        actions.close(); demoActions.close(); actionOutput.close(); demoActionOutput.close(); actionInput?.close()
         pairing.cancel(); refresh?.cancel(); refresh = null; voice.close(); recorder.close(); focus.close(); api.close(); navi.close()
         serverBase = url; retryAt = 0; liveEnabled = false
         // Rebuild only the origin-bound runtime, preserving all trip state.
@@ -752,6 +949,7 @@ class MobiService : Service() {
         main.removeCallbacksAndMessages(null)
         // Drain already queued state work, then close its resources on that same owner.
         worker.post {
+            if (::actions.isInitialized) { actions.interrupt(); actions.close(); demoActions.close(); actionOutput.close(); demoActionOutput.close(); actionInput?.close() }
             if (::voice.isInitialized) voice.close()
             if (::recorder.isInitialized) recorder.close()
             if (::focus.isInitialized) focus.close()

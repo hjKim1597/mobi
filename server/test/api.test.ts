@@ -8,6 +8,7 @@ import { createDeadline, googleJson } from '../src/google';
 import { routeCalendarQuestion } from '../src/calendar-router';
 import { fingerprintCalendar } from '../src/briefing-cache';
 import { failureSentences } from '../src/failure-audio';
+import { GOOGLE_SCOPES } from '../src/google';
 
 declare module 'cloudflare:test' {
   interface ProvidedEnv extends Env {}
@@ -26,6 +27,22 @@ async function settleRpc(predicate: () => boolean): Promise<void> {
     await new Promise<void>(resolve => realSetTimeout(resolve, 1));
   }
   throw Error('DO RPC did not settle');
+}
+// Hold real provider responses until the test releases them, without a delay
+// or advancing timers owned by a different Durable Object.
+function heldJson(matches: (url: URL) => boolean, payload: unknown, expectedStarts = 1) {
+  const original = globalThis.fetch;
+  let starts = 0, announce!: () => void, release!: () => void;
+  const entered = new Promise<void>(resolve => { announce = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(input instanceof Request ? input.url : String(input));
+    if (!matches(url)) return original(input, init);
+    if (++starts === expectedStarts) announce();
+    await gate;
+    return Response.json(payload);
+  });
+  return { entered, release, restore: () => spy.mockRestore(), get starts() { return starts; } };
 }
 function pcmAudio(amplitude = 0, samples = 320) {
   const bytes = new Uint8Array(44 + samples * 2), v = new DataView(bytes.buffer);
@@ -211,6 +228,7 @@ describe('authentication and routes', () => {
       : route.path === '/v1/pairing/ABC123' ? 404
       : route.path === '/v1/connections/google' ? 200
       : route.path === '/v1/today' || route.path === '/v1/briefings' ? 403
+      : route.path.startsWith('/v1/actions/') ? 404
       : route.path === '/v1/confirm' || route.path === '/v1/turns' ? 200 : 501;
     expect(response.status).toBe(status);
     if (status === 501) expect(await response.json()).toMatchObject({ error: { code: 'NOT_IMPLEMENTED' } });
@@ -302,13 +320,34 @@ describe('daily AI quotas', () => {
   });
   it('charges two STT calls to neurons but only one daily request when hedging', async () => {
     const device = await register(); await pair(device); fakeRequestClock();
-    const ai = { run: vi.fn((model: string) => new Promise(resolve => setTimeout(() => resolve({ text: '보내' }), model.endsWith('turbo') ? 2300 : 10))) } as unknown as Ai;
-    const pending = call('/v1/confirm', { method: 'POST', token: device.deviceToken, body: { audio: pcmAudio(2000) }, bindings: { AI: ai, DEVICE_DAILY_CAP: '1' } });
+    let invocation = 0;
+    const ai = { run: vi.fn((_model: string) => {
+      const callNumber = invocation++;
+      return new Promise(resolve => setTimeout(() => resolve({ text: '보내' }), callNumber === 0 ? 2300 : 10));
+    }) } as unknown as Ai;
+    const neuronReservations: number[] = [];
+    const neuronLedger = env.PAIRING.getByName('quota:neurons');
+    const pairings = { getByName: (name: string) => name === 'quota:neurons' ? {
+      reserveNeurons: async (day: string, neurons: number) => {
+        neuronReservations.push(neurons);
+        return neuronLedger.reserveNeurons(day, neurons);
+      },
+    } : env.PAIRING.getByName(name) } as unknown as Env['PAIRING'];
+    const pending = call('/v1/confirm', { method: 'POST', token: device.deviceToken, body: { audio: pcmAudio(2000) }, bindings: { AI: ai, PAIRING: pairings, DEVICE_DAILY_CAP: '1' } });
     await settleRpc(() => (ai.run as any).mock.calls.length === 1);
     await vi.advanceTimersByTimeAsync(1400); await settleRpc(() => (ai.run as any).mock.calls.length === 2);
     await vi.advanceTimersByTimeAsync(1000);
     const response = await pending; expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ match: { action: 'SEND', mode: 'exact' } });
+    const sttCalls = (ai.run as any).mock.calls;
+    expect(sttCalls.map(([model]: [string]) => model)).toEqual([
+      '@cf/openai/whisper-large-v3-turbo', '@cf/openai/whisper-large-v3-turbo',
+    ]);
+    expect(sttCalls[0][1]).toEqual(sttCalls[1][1]);
+    expect(sttCalls[0][1]).toMatchObject({ task: 'transcribe', language: 'ko', vad_filter: true,
+      condition_on_previous_text: false, initial_prompt: expect.stringContaining('짧은 한국어 확인 응답입니다.') });
+    expect(neuronReservations).toHaveLength(2);
+    expect(neuronReservations[1]).toBe(neuronReservations[0]);
     for (const [stub, used] of [[env.PAIRING.getByName('quota:neurons'), 2], [env.PAIRING.getByName('quota:global'), 1], [env.DEVICE_AGENTS.getByName(device.deviceId), 1]] as const) {
       expect(await runInDurableObject(stub, (_i, state) => state.storage.sql.exec('SELECT used FROM daily').one().used)).toBe(used);
     }
@@ -513,15 +552,20 @@ describe('A4 pairing and OAuth', () => {
 
   it('commits only one of two competing pairing attempts for the same device epoch', async () => {
     const device = await register();
-    const first = await issue(device);
-    const second = await issue(device);
-    const a = await browser(first.code);
-    const b = await browser(second.code);
-    tokenMock().times(2).delay(20);
+    const first = await issue(device), second = await issue(device);
+    const a = await browser(first.code), b = await browser(second.code);
+    const tokens = heldJson(url => url.origin === 'https://oauth2.googleapis.com' && url.pathname === '/token', googleTokens(), 2);
     fetchMock.get('https://oauth2.googleapis.com').intercept({ method: 'POST', path: '/revoke' }).reply(200, '');
-    const responses = await Promise.all([callback(a.auth, a.cookie), callback(b.auth, b.cookie)]);
-    expect(responses.map(r => r.status).sort()).toEqual([200, 410]);
-    expect((await stored(device)).rows).toHaveLength(1);
+    const competing = Promise.all([callback(a.auth, a.cookie), callback(b.auth, b.cookie)]);
+    try {
+      await tokens.entered;
+      expect(tokens.starts).toBe(2);
+      tokens.release();
+      const responses = await competing;
+      expect(responses.map(r => r.status).sort()).toEqual([200, 410]);
+      expect(tokens.starts).toBe(2);
+      expect((await stored(device)).rows).toHaveLength(1);
+    } finally { tokens.release(); await competing.catch(() => {}); tokens.restore(); }
   });
 
   it('preserves an existing connection when a new consent omits a refresh token', async () => {
@@ -536,19 +580,18 @@ describe('A4 pairing and OAuth', () => {
   });
 
   it('prevents an in-flight OAuth callback from restoring a disconnected device', async () => {
-    const device = await register();
-    const code = await issue(device);
-    const session = await browser(code.code);
-    let started!: () => void;
-    const entered = new Promise<void>(resolve => { started = resolve; });
-    fetchMock.get('https://oauth2.googleapis.com').intercept({ method: 'POST', path: '/token' })
-      .reply(() => { started(); return { statusCode: 200, data: googleTokens() }; }).delay(40);
+    const device = await register(), code = await issue(device), session = await browser(code.code);
+    const tokens = heldJson(url => url.origin === 'https://oauth2.googleapis.com' && url.pathname === '/token', googleTokens());
     const pending = callback(session.auth, session.cookie);
-    await entered;
-    expect((await call('/v1/connections/google', { method: 'DELETE', token: device.deviceToken })).status).toBe(200);
-    fetchMock.get('https://oauth2.googleapis.com').intercept({ method: 'POST', path: '/revoke' }).reply(200, '');
-    expect((await pending).status).toBe(410);
-    expect((await stored(device)).rows).toEqual([]);
+    try {
+      await tokens.entered;
+      expect((await call('/v1/connections/google', { method: 'DELETE', token: device.deviceToken })).status).toBe(200);
+      fetchMock.get('https://oauth2.googleapis.com').intercept({ method: 'POST', path: '/revoke' }).reply(200, '');
+      tokens.release();
+      expect((await pending).status).toBe(410);
+      expect(tokens.starts).toBe(1);
+      expect((await stored(device)).rows).toEqual([]);
+    } finally { tokens.release(); await pending.catch(() => {}); tokens.restore(); }
   });
 
   it('repairs partial Pairing completion from the committed device attempt id', async () => {
@@ -625,10 +668,11 @@ describe('A4 pairing and OAuth', () => {
     expect(response.headers.get('Referrer-Policy')).toBe('no-referrer');
   });
 
-  it('binds browser cookies/state and requests only the two Calendar offline-consent scopes', async () => {
+  it('binds browser cookies/state and incrementally requests read and action scopes', async () => {
     const code = await issue(await register());
     const session = await browser(code.code);
-    expect(session.auth.searchParams.get('scope')?.split(' ')).toEqual(scopes);
+    expect(session.auth.searchParams.get('scope')?.split(' ')).toEqual(GOOGLE_SCOPES);
+    expect(session.auth.searchParams.get('include_granted_scopes')).toBe('true');
     expect(session.auth.searchParams.get('access_type')).toBe('offline');
     expect(session.auth.searchParams.get('prompt')).toBe('consent');
     expect(session.auth.searchParams.get('redirect_uri')).toBe('https://mobi.invalid/oauth/google/callback');
@@ -748,12 +792,29 @@ describe('A5 Calendar today', () => {
   });
 
   it('aborts provider work on deadline and never treats a late payload as success', async () => {
-    fetchMock.get('https://www.googleapis.com').intercept({ path: '/calendar/v3/calendars/primary' })
-      .reply(200, { timeZone: 'Asia/Seoul' }).delay(30);
+    fakeRequestClock();
+    let started!: () => void, releaseLate!: () => void;
+    const entered = new Promise<void>(resolve => { started = resolve; });
+    const original = globalThis.fetch;
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) !== 'https://www.googleapis.com/calendar/v3/calendars/primary') return original(input, init);
+      return new Promise<Response>((resolve, reject) => {
+        releaseLate = () => resolve(Response.json({ timeZone: 'Asia/Seoul' }));
+        init?.signal?.addEventListener('abort', () => reject(new Error('fixture provider aborted')), { once: true });
+        started();
+      });
+    });
     const deadline = createDeadline(1);
     try {
-      await expect(googleJson(new URL('https://www.googleapis.com/calendar/v3/calendars/primary'), accessMarker(), deadline.signal)).rejects.toThrow();
+      const pending = googleJson(new URL('https://www.googleapis.com/calendar/v3/calendars/primary'), accessMarker(), deadline.signal);
+      const rejected = expect(pending).rejects.toThrow();
+      await entered;
+      await vi.advanceTimersByTimeAsync(1);
+      await rejected;
       expect(deadline.signal.aborted).toBe(true);
+      releaseLate();
+      await vi.advanceTimersByTimeAsync(0);
+      await expect(pending).rejects.toThrow();
     } finally { deadline.dispose(); }
   });
 
@@ -769,23 +830,21 @@ describe('A5 Calendar today', () => {
     for (const operation of ['refresh', 'calendar']) {
       const device = await register(operation === 'refresh' ? '192.0.2.31' : '192.0.2.32');
       await connect(device);
-      let started!: () => void;
-      const entered = new Promise<void>(resolve => { started = resolve; });
-      if (operation === 'refresh') {
-        vi.setSystemTime(Date.now() + 3_600_000);
-        fetchMock.get('https://oauth2.googleapis.com').intercept({ method: 'POST', path: '/token' })
-          .reply(() => { started(); return { statusCode: 200, data: googleTokens() }; }).delay(40);
-      } else {
-        fetchMock.get('https://www.googleapis.com').intercept({ path: '/calendar/v3/calendars/primary' })
-          .reply(() => { started(); return { statusCode: 200, data: { timeZone: 'Asia/Seoul' } }; }).delay(40);
-        fetchMock.get('https://www.googleapis.com').intercept({ path: /^\/calendar\/v3\/calendars\/primary\/events\?/ }).reply(200, { items: [] });
-      }
+      if (operation === 'refresh') vi.setSystemTime(Date.now() + 3_600_000);
+      const provider = heldJson(url => operation === 'refresh'
+        ? url.origin === 'https://oauth2.googleapis.com' && url.pathname === '/token'
+        : url.origin === 'https://www.googleapis.com' && url.pathname === '/calendar/v3/calendars/primary',
+      operation === 'refresh' ? googleTokens() : { timeZone: 'Asia/Seoul' });
       const pending = call('/v1/today', { token: device.deviceToken });
-      await entered;
-      fetchMock.get('https://oauth2.googleapis.com').intercept({ method: 'POST', path: '/revoke' }).reply(200, '');
-      await call('/v1/connections/google', { method: 'DELETE', token: device.deviceToken });
-      expect((await pending).status).toBe(403);
-      expect((await stored(device)).rows).toEqual([]);
+      try {
+        await provider.entered;
+        fetchMock.get('https://oauth2.googleapis.com').intercept({ method: 'POST', path: '/revoke' }).reply(200, '');
+        await call('/v1/connections/google', { method: 'DELETE', token: device.deviceToken });
+        provider.release();
+        expect((await pending).status).toBe(403);
+        expect(provider.starts).toBe(1);
+        expect((await stored(device)).rows).toEqual([]);
+      } finally { provider.release(); await pending.catch(() => {}); provider.restore(); }
     }
   });
 
@@ -933,7 +992,38 @@ describe('voice API contracts', () => {
 
 
 describe('voice API implementation', () => {
-  it.each([['보내.', 'SEND', 'exact'], ['응', 'LISTEN', 'exact'], ['보내지 마', 'CANCEL', 'exact'], ['보네', 'NOT_NOW', 'none']])('runs STT only for %s', async (text, action, mode) => {
+  it('hedges a turn with matching turbo parameters and keeps the first valid result', async () => {
+    const device = await register(); await connect(device); calendarMock(); fakeRequestClock();
+    const sttResults: Array<(value: { text: string }) => void> = [];
+    const fallback = mockAi();
+    const ai = { run: vi.fn((model: string, options: unknown) => model.includes('whisper')
+      ? new Promise<{ text: string }>(resolve => sttResults.push(resolve))
+      : (fallback.run as any)(model, options)) } as unknown as Ai;
+    const { pending, execution } = startVoiceRequest('/v1/turns', device,
+      { tripId: 'same-model-hedge', audio: pcmAudio(2000) }, { AI: ai });
+    await settleRpc(() => (ai.run as any).mock.calls.length === 1);
+    await vi.advanceTimersByTimeAsync(1000);
+    await settleRpc(() => (ai.run as any).mock.calls.length === 2);
+
+    const sttCalls = (ai.run as any).mock.calls;
+    expect(sttCalls.map(([model]: [string]) => model)).toEqual([
+      '@cf/openai/whisper-large-v3-turbo', '@cf/openai/whisper-large-v3-turbo',
+    ]);
+    expect(sttCalls[0][1]).toEqual(sttCalls[1][1]);
+    expect(sttCalls[0][1]).toEqual({ audio: expect.any(String), task: 'transcribe', language: 'ko',
+      vad_filter: true, condition_on_previous_text: false });
+
+    sttResults[1]({ text: '오늘 일정 알려줘.' });
+    const response = await pending;
+    await check(response);
+    expect(response.status).toBe(200);
+    const result = await response.json() as any;
+    expect(result.transcript).toBe('오늘 일정 알려줘.');
+    sttResults[0]({ text: '보내' });
+    await waitOnExecutionContext(execution);
+  });
+
+  it.each([['보내.', 'SEND', 'exact'], ['응', 'LISTEN', 'exact'], ['보내지 마', 'CANCEL', 'exact'], ['보네', 'NOT_NOW', 'none'], ['분해', 'NOT_NOW', 'none']])('runs STT only for %s', async (text, action, mode) => {
     const device = await register(); await pair(device); const ai = mockAi(text);
     const response = await call('/v1/confirm', { method: 'POST', token: device.deviceToken, body: { audio: pcmAudio(2000) }, bindings: { AI: ai } });
     expect(response.status).toBe(200); expect(await response.json()).toMatchObject({ transcript: text, match: { action, mode } });
@@ -968,6 +1058,50 @@ describe('voice API implementation', () => {
     expect(b.sentences).toHaveLength(1); expect(b.sentences[0]).toEqual({ text: '오늘 일정은 세 개예요.', audio });
     expect(ai.run).toHaveBeenCalledTimes(3);
   });
+  it('finishes a turn after 4,800 ms while retaining the final epoch check before 5,100 ms', async () => {
+    const device = await register(); await connect(device); calendarMock(); fakeRequestClock();
+    const startedAt = Date.now();
+    const base = mockAi('오늘 회의 자세히 설명해줘.');
+    const ttsResolvers: Array<(response: Response) => void> = [];
+    let audioReady = false, finalEpochCheckAt: number | undefined;
+    const deviceAgents = { getByName: (id: string) => {
+      const stub = env.DEVICE_AGENTS.getByName(id);
+      if (id !== device.deviceId) return stub;
+      return {
+        authenticate: (hash: string) => stub.authenticate(hash),
+        consumeDaily: (day: string, cap: number) => stub.consumeDaily(day, cap),
+        getConnectionState: async () => {
+          const state = await stub.getConnectionState();
+          if (audioReady) finalEpochCheckAt = Date.now();
+          return state;
+        },
+        todayWithTiming: (now: number, deadlineAt?: number) => stub.todayWithTiming(now, deadlineAt),
+        getBriefingCache: (input: Parameters<typeof stub.getBriefingCache>[0]) => stub.getBriefingCache(input),
+      };
+    } } as unknown as Env['DEVICE_AGENTS'];
+    const ai = { run: vi.fn((model: string, ...args: any[]) => model.includes('melotts')
+      ? new Promise<Response>(resolve => ttsResolvers.push(resolve))
+      : (base.run as any)(model, ...args)) } as unknown as Ai;
+    const { pending, execution } = startVoiceRequest('/v1/turns', device,
+      { tripId: 'after-old-turn-deadline', audio: pcmAudio(2000) }, { AI: ai, DEVICE_AGENTS: deviceAgents });
+
+    await settleRpc(() => ttsResolvers.length >= 1);
+    await vi.advanceTimersByTimeAsync(600);
+    await settleRpc(() => ttsResolvers.length >= 2);
+    await vi.advanceTimersByTimeAsync(4300);
+    expect(Date.now() - startedAt).toBe(4_900);
+    const audioResponse = new Response(Uint8Array.from(atob(audio.data), c => c.charCodeAt(0)),
+      { headers: { 'Content-Type': 'audio/mpeg' } });
+    audioReady = true;
+    ttsResolvers.forEach(resolve => resolve(audioResponse.clone()));
+    const response = await pending;
+    await check(response);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ transcript: '오늘 회의 자세히 설명해줘.', sentences: [{ text: '오늘 일정은 세 개예요.' }] });
+    expect(finalEpochCheckAt).toBeGreaterThanOrEqual(startedAt + 4_900);
+    expect(finalEpochCheckAt).toBeLessThan(startedAt + 5_100);
+    await waitOnExecutionContext(execution);
+  });
   it('suppresses hallucinations without LLM, TTS, or result persistence', async () => {
     const device = await register(); await pair(device); const ai = mockAi('보내. 구독 좋아요');
     const response = await call('/v1/turns', { method: 'POST', token: device.deviceToken, body: { tripId: 'trip-1', audio: pcmAudio(2000) }, bindings: { AI: ai } });
@@ -993,7 +1127,7 @@ describe('voice API implementation', () => {
     await settleRpc(() => (ai.run as any).mock.calls.length === 1);
     await vi.advanceTimersByTimeAsync(1000);
     await settleRpc(() => (ai.run as any).mock.calls.length === 2);
-    await vi.advanceTimersByTimeAsync(3800);
+    await vi.advanceTimersByTimeAsync(5000);
     const response = await pending; expect(response.status).toBe(502); expect(ai.run).toHaveBeenCalledTimes(2);
     await check(response);
     await vi.advanceTimersByTimeAsync(4000); await waitOnExecutionContext(execution);
@@ -1015,15 +1149,17 @@ describe('voice connection lifecycle regressions', () => {
       return (base.run as any)(...args);
     }) } as unknown as Ai;
     if (stage === 'calendar') {
-      let entered!: () => void; const start = new Promise<void>(r => { entered = r; });
-      fetchMock.get('https://www.googleapis.com').intercept({ path: '/calendar/v3/calendars/primary' })
-        .reply(() => { entered(); return { statusCode: 200, data: { timeZone: 'Asia/Seoul' } }; }).delay(30);
+      const provider = heldJson(url => url.origin === 'https://www.googleapis.com' && url.pathname === '/calendar/v3/calendars/primary', { timeZone: 'Asia/Seoul' });
       // fetchToday may reach events before the DO checks its epoch again.
       fetchMock.get('https://www.googleapis.com').intercept({ path: /^\/calendar\/v3\/calendars\/primary\/events\?/ }).reply(200, { items: [] });
       const pending = call('/v1/turns', { method: 'POST', token: device.deviceToken, body: { tripId: 'trip', audio: pcmAudio(1000) }, bindings: { AI: ai } });
-      await start; await replaceConnection(device);
-      const response = await pending; expect(response.status).toBe(403);
-      expect(await response.json()).not.toHaveProperty('sentences'); expect(ai.run).toHaveBeenCalledTimes(1);
+      try {
+        await provider.entered;
+        await replaceConnection(device);
+        provider.release();
+        const response = await pending; expect(response.status).toBe(403);
+        expect(await response.json()).not.toHaveProperty('sentences'); expect(ai.run).toHaveBeenCalledTimes(1);
+      } finally { provider.release(); await pending.catch(() => {}); provider.restore(); }
     } else {
       calendarMock();
       const response = await call('/v1/turns', { method: 'POST', token: device.deviceToken, body: { tripId: 'trip', audio: pcmAudio(1000) }, bindings: { AI: ai } });
@@ -1032,37 +1168,55 @@ describe('voice connection lifecycle regressions', () => {
     }
   });
   it('cancels a body reader that never completes within the absolute deadline', async () => {
-    const device = await register(); await pair(device); vi.useFakeTimers();
+    const device = await register(); await pair(device); fakeRequestClock();
     const body = new ReadableStream<Uint8Array>();
     const request = new Request('https://mobi.invalid/v1/confirm', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + device.deviceToken }, body });
-    const read = vi.spyOn(request.body!, 'getReader');
+    const requestBody = request.body! as any;
+    const originalGetReader = requestBody.getReader.bind(requestBody) as () => ReadableStreamDefaultReader<Uint8Array>;
+    let reader!: ReadableStreamDefaultReader<Uint8Array>;
+    let startRead!: () => void;
+    const readStarted = new Promise<void>(resolve => { startRead = resolve; });
+    vi.spyOn(requestBody, 'getReader').mockImplementation(() => {
+      reader = originalGetReader();
+      const originalRead = reader.read.bind(reader);
+      vi.spyOn(reader, 'read').mockImplementation((...readArgs) => {
+        startRead();
+        return originalRead(...readArgs);
+      });
+      return reader;
+    });
     const pending = worker.fetch(request, { ...env, AI: mockAi() });
-    await vi.waitFor(() => expect(read).toHaveBeenCalled());
-    const cancelReader = vi.spyOn(read.mock.results[0].value as ReadableStreamDefaultReader<Uint8Array>, 'cancel');
+    await readStarted;
+    const cancelReader = vi.spyOn(reader, 'cancel');
+    expect(vi.getTimerCount()).toBeGreaterThan(0);
     await vi.advanceTimersByTimeAsync(4800);
     const response = await pending; expect(response.status).toBe(502); expect(cancelReader).toHaveBeenCalled();
   });
   it('wipes a body chunk already emitted when the request deadline aborts its next read', async () => {
-    const device = await register(); await pair(device); vi.useFakeTimers();
+    const device = await register(); await pair(device); fakeRequestClock();
     const first = new Uint8Array([123]);
     const lateChunk = new Uint8Array([34, 97, 117, 100, 105, 111]);
     let releaseLate!: (result: ReadableStreamReadResult<Uint8Array>) => void;
+    let secondReadStarted!: () => void;
+    const secondReadEntered = new Promise<void>(resolve => { secondReadStarted = resolve; });
     const reader = {
       read: vi.fn().mockResolvedValueOnce({ done: false, value: first })
-        .mockImplementationOnce(() => new Promise(resolve => { releaseLate = resolve; })),
+        .mockImplementationOnce(() => new Promise(resolve => { releaseLate = resolve; secondReadStarted(); })),
       cancel: vi.fn(async () => {}),
     } as unknown as ReadableStreamDefaultReader<Uint8Array>;
     const body = { getReader: () => reader } as unknown as ReadableStream<Uint8Array>;
     const request = { url: 'https://mobi.invalid/v1/confirm', method: 'POST',
       headers: new Headers({ 'Content-Type': 'application/json', Authorization: 'Bearer ' + device.deviceToken }), body } as Request;
     const pending = worker.fetch(request, { ...env, AI: mockAi() });
-    await vi.waitFor(() => expect(reader.read).toHaveBeenCalledTimes(2));
+    await secondReadEntered;
+    expect(vi.getTimerCount()).toBeGreaterThan(0);
     await vi.advanceTimersByTimeAsync(4800);
     const response = await pending;
     expect(response.status).toBe(502);
     expect(reader.cancel).toHaveBeenCalled();
     releaseLate({ done: false, value: lateChunk });
-    await new Promise<void>(resolve => realSetTimeout(resolve, 0));
+    await Promise.resolve();
+    await Promise.resolve();
     expect(first.every(value => value === 0)).toBe(true);
     expect(lateChunk.every(value => value === 0)).toBe(true);
   });
@@ -1087,13 +1241,48 @@ describe('bundled voice routes with actual generated assets', () => {
 });
 
 describe('shared Calendar deadline', () => {
-  it('uses the caller remaining time rather than starting a new six-second budget', async () => {
+  it('uses the caller remaining time for an actual Calendar read', async () => {
     const device = await register(); await connect(device);
-    fetchMock.get('https://www.googleapis.com').intercept({ path: '/calendar/v3/calendars/primary' })
-      .reply(200, { timeZone: 'Asia/Seoul' }).delay(40);
-    const now = Date.now();
-    const result = await env.DEVICE_AGENTS.getByName(device.deviceId).today(now, now + 10);
-    expect(result.status).toBe(502);
+    const stub = env.DEVICE_AGENTS.getByName(device.deviceId);
+    const result = await runInDurableObject(stub, async instance => {
+      const originalFetch = globalThis.fetch;
+      const originalSetTimeout = globalThis.setTimeout;
+      const now = Date.now();
+      let requestStarted!: () => void;
+      const entered = new Promise<void>(resolve => { requestStarted = resolve; });
+      let releaseResponse!: () => void;
+      const responseReleased = new Promise<void>(resolve => { releaseResponse = resolve; });
+      let fireDeadline!: () => void;
+      globalThis.setTimeout = ((callback: (...args: any[]) => void, milliseconds?: number, ...args: any[]) => {
+        if (milliseconds === 10) {
+          fireDeadline = () => callback(...args);
+          return 0 as unknown as ReturnType<typeof setTimeout>;
+        }
+        return originalSetTimeout(callback, milliseconds, ...args);
+      }) as typeof setTimeout;
+      globalThis.fetch = (async input => {
+        const url = String(input);
+        if (url.endsWith('/calendar/v3/calendars/primary')) {
+          requestStarted();
+          await responseReleased;
+          return new Response(JSON.stringify({ timeZone: 'Asia/Seoul' }));
+        }
+        return new Response(JSON.stringify({ items: [] }));
+      }) as typeof fetch;
+      try {
+        const pending = instance.today(now, now + 10);
+        await entered;
+        const hadTenMsDeadline = typeof fireDeadline === 'function';
+        if (hadTenMsDeadline) fireDeadline();
+        releaseResponse();
+        return { result: await pending, hadTenMsDeadline };
+      } finally {
+        globalThis.fetch = originalFetch;
+        globalThis.setTimeout = originalSetTimeout;
+      }
+    });
+    expect(result.hadTenMsDeadline).toBe(true);
+    expect(result.result.status).toBe(502);
   });
 });
 
@@ -1480,9 +1669,9 @@ describe('three-day stage admission and provider failures', () => {
     const { pending, execution } = startVoiceRequest('/v1/turns', device,
       { tripId: 'llm-quota-window', audio: pcmAudio(2000) }, { AI: ai, PAIRING: pairings });
 
-    await advancePastHedgedStt({ run }, 1400, () => sttResolvers[0]({ text: '이번 주 일정 알려줘' }));
+    await advancePastHedgedStt({ run }, 2600, () => sttResolvers[0]({ text: '이번 주 일정 알려줘' }));
     await settleRpc(() => reservations.length >= 3);
-    expect(3900 - (reservations[2].at - startedAt)).toBe(2500);
+    expect(5100 - (reservations[2].at - startedAt)).toBe(2500);
     expect(run.mock.calls.some(([model]) => String(model).includes('gpt-oss'))).toBe(false);
     sttResolvers.forEach(resolve => resolve({ text: '이번 주 일정 알려줘' }));
     const response = await pending;
@@ -1511,10 +1700,10 @@ describe('three-day stage admission and provider failures', () => {
     const { pending, execution } = startVoiceRequest('/v1/turns', device,
       { tripId: 'tts-quota-window', audio: pcmAudio(2000) }, { AI: ai, PAIRING: pairings });
 
-    await advancePastHedgedStt({ run }, 2300, () => sttResolvers[0]({ text: '오늘 일정 몇 개야' }));
+    await advancePastHedgedStt({ run }, 3500, () => sttResolvers[0]({ text: '오늘 일정 몇 개야' }));
     await settleRpc(() => reservations.some(row => row.neurons === 21));
     const ttsReservation = reservations.find(row => row.neurons === 21)!;
-    expect(3900 - (ttsReservation.at - startedAt)).toBe(1600);
+    expect(5100 - (ttsReservation.at - startedAt)).toBe(1600);
     sttResolvers.forEach(resolve => resolve({ text: '오늘 일정 몇 개야' }));
     const response = await pending;
     await check(response);
@@ -1526,8 +1715,8 @@ describe('three-day stage admission and provider failures', () => {
   });
 
   it.each([
-    { stage: 'LLM', sttMs: 1400, transcript: '이번 주 일정 알려줘', model: 'gpt-oss', remaining: 2500 },
-    { stage: 'TTS', sttMs: 2300, transcript: '오늘 일정 몇 개야', model: 'melotts', remaining: 1600 },
+    { stage: 'LLM', sttMs: 2600, transcript: '이번 주 일정 알려줘', model: 'gpt-oss', remaining: 2500 },
+    { stage: 'TTS', sttMs: 3500, transcript: '오늘 일정 몇 개야', model: 'melotts', remaining: 1600 },
   ])('returns 502 for a real $stage provider 500 with $remaining ms stage headroom', async ({ stage, sttMs, transcript, model, remaining }) => {
     const device = await register(); await connect(device);
     calendarMock('Asia/Seoul', []); fakeRequestClock();
@@ -1544,7 +1733,7 @@ describe('three-day stage admission and provider failures', () => {
 
     await advancePastHedgedStt({ run }, sttMs, () => sttResolvers[0]({ text: transcript }));
     await settleRpc(() => providerAt.length === 1);
-    expect(3900 - (providerAt[0] - startedAt)).toBe(remaining);
+    expect(5100 - (providerAt[0] - startedAt)).toBe(remaining);
     sttResolvers.forEach(resolve => resolve({ text: transcript }));
     const response = await pending;
     await check(response);
@@ -1554,7 +1743,7 @@ describe('three-day stage admission and provider failures', () => {
     await waitOnExecutionContext(execution);
   });
 
-  it('returns the fixed failure sentence only when the 3,900 ms response-ready deadline expires', async () => {
+  it('returns the fixed failure sentence only when the 5,100 ms response-ready deadline expires', async () => {
     const device = await register(); await connect(device); calendarMock(); fakeRequestClock();
     const never: Array<(value: unknown) => void> = [];
     const run = vi.fn((model: string) => {
@@ -1568,7 +1757,7 @@ describe('three-day stage admission and provider failures', () => {
     await settleRpc(() => never.length === 1);
     await vi.advanceTimersByTimeAsync(650);
     await settleRpc(() => never.length === 2);
-    await vi.advanceTimersByTimeAsync(3250); // 650 + 3,250 = the response-ready cutoff.
+    await vi.advanceTimersByTimeAsync(4450); // 650 + 4,450 = the response-ready cutoff.
     never.forEach(resolve => resolve({}));
     const response = await pending;
     await check(response);
@@ -1579,7 +1768,7 @@ describe('three-day stage admission and provider failures', () => {
   });
 });
 
-describe('confirm and Calendar retain the outer 4,800 ms deadline', () => {
+describe('confirm keeps 4,800 ms while turn Calendar keeps 6,000/5,100 ms deadlines', () => {
   it('allows confirm STT to finish after 3,900 ms and before the outer deadline', async () => {
     const device = await register(); await pair(device); fakeRequestClock();
     const sttResolvers: Array<(value: { text: string }) => void> = [];
@@ -1598,7 +1787,7 @@ describe('confirm and Calendar retain the outer 4,800 ms deadline', () => {
     await waitOnExecutionContext(execution);
   });
 
-  it('lets a stalled Calendar read reach the outer deadline while the question degrades at 3,900 ms', async () => {
+  it('lets a stalled Calendar read reach the 6,000 ms outer deadline while the question degrades at 5,100 ms', async () => {
     const device = await register(); await connect(device); fakeRequestClock();
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     const startedAt = Date.now(); let capturedDeadline: number | undefined; let epochChecks = 0;
@@ -1623,8 +1812,8 @@ describe('confirm and Calendar retain the outer 4,800 ms deadline', () => {
       // Finish post-STT authorization before advancing the Calendar wait to its cutoff.
       await settleRpc(() => capturedDeadline !== undefined && epochChecks >= 2);
       await vi.advanceTimersByTimeAsync(0);
-      expect(capturedDeadline).toBe(startedAt + 4800);
-      await vi.advanceTimersByTimeAsync(3900);
+      expect(capturedDeadline).toBe(startedAt + 6000);
+      await vi.advanceTimersByTimeAsync(5100);
       await settleRpc(() => log.mock.calls.length > 0);
     } finally {
       releaseCalendar({ result: { status: 502 }, timing: { cache: 'miss', tokenRefresh: false } });

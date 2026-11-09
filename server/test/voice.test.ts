@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { inspectPcmWav, bytesToBase64 } from '../src/audio';
-import { withDeadline, createVoiceDeadline } from '../src/deadline';
+import { withDeadline, createVoiceDeadline, runHedged } from '../src/deadline';
 import { matchClosedSet, REPLIES, transcribe, synthesize, buildBriefing, handleConfirm } from '../src/voice';
 import { WorkersAiLlmProvider, contentDelta, speechSentence } from '../src/llm';
 import type { TodayCalendar } from '../src/calendar';
@@ -25,13 +25,67 @@ describe('voice stage hedges', () => {
   const audio = { data: bytesToBase64(wav(320, 2000)), mimeType: 'audio/wav' as const };
   const freshAudio = () => ({ ...audio });
   const later = <T>(ms: number, value: T, fail = false) => new Promise<T>((resolve, reject) => setTimeout(() => fail ? reject(Error('upstream')) : resolve(value), ms));
+  it.each([
+    ['turn', 'hedge'], ['turn', 'primary'], ['confirm', 'hedge'], ['confirm', 'primary'],
+  ] as const)('%s hedge uses identical Turbo inputs and accepts the first valid %s result', async (mode, winner) => {
+    vi.useFakeTimers();
+    const input = { data: bytesToBase64(wav(128000, 2000)), mimeType: 'audio/wav' as const };
+    const expectedAudio = input.data;
+    const calls: any[][] = [], reservations: any[][] = [];
+    const ai = fakeAi((model: string, payload: any) => {
+      calls.push([model, payload]);
+      const ordinal = calls.length;
+      const delay = winner === 'primary'
+        ? ordinal === 1 ? 1500 : 2500
+        : ordinal === 1 ? 2500 : 100;
+      return later(delay, { text: ordinal === 1 ? '아니' : '보내' });
+    });
+    const context = {
+      reserve: (stage: 'stt' | 'llm' | 'tts', call: 'primary' | 'hedge', neurons: number) => { reservations.push([stage, call, neurons]); },
+    };
+    const pending = mode === 'turn'
+      ? transcribe(ai, input, 'turn', Date.now() + 4800, context)
+      : handleConfirm(ai, input, Date.now() + 4800, context);
+    await vi.advanceTimersByTimeAsync(mode === 'turn' ? 1100 : 1500);
+    expect(calls).toHaveLength(2);
+    expect(calls.map(([model]) => model)).toEqual(['@cf/openai/whisper-large-v3-turbo', '@cf/openai/whisper-large-v3-turbo']);
+    expect(calls[1][1]).toEqual(calls[0][1]);
+    expect(calls[0][1]).toEqual({
+      audio: expectedAudio, task: 'transcribe', language: 'ko', vad_filter: true, condition_on_previous_text: false,
+      ...(mode === 'confirm' ? { initial_prompt: '짧은 한국어 확인 응답입니다. 가능한 응답: ' + REPLIES.join('. ') + '.' } : {}),
+    });
+    expect(reservations).toHaveLength(2);
+    expect(reservations.map(([, call]) => call)).toEqual(['primary', 'hedge']);
+    expect(reservations[0][2]).toBeGreaterThan(1);
+    expect(reservations[1][2]).toBe(reservations[0][2]);
+    await vi.advanceTimersByTimeAsync(winner === 'primary' ? 500 : 0);
+    const result = await pending;
+    const transcript = typeof result === 'string' ? result : result.transcript;
+    expect(transcript).toBe(winner === 'primary' ? '아니' : '보내');
+  });
+  it.each(['primary', 'hedge'] as const)('aborts both production STT call signals after %s wins', async winner => {
+    vi.useFakeTimers();
+    const primarySignal: AbortSignal[] = [], hedgeSignal: AbortSignal[] = [];
+    const pending = runHedged('stt', Date.now() + 4800, (call, signal) => {
+      (call === 'primary' ? primarySignal : hedgeSignal).push(signal);
+      return call === winner ? later(1200, call) : later(2500, call);
+    }, {}, 1000);
+    await vi.advanceTimersByTimeAsync(winner === 'primary' ? 1200 : 2200);
+    await expect(pending).resolves.toBe(winner);
+    expect(primarySignal[0].aborted).toBe(true);
+    expect(hedgeSignal[0].aborted).toBe(true);
+  });
   it('hedges confirm at 1400ms, reserving before first-valid fallback wins', async () => {
     vi.useFakeTimers(); const reserve = vi.fn(), observe = vi.fn();
-    const ai = fakeAi((model: string) => later(model.endsWith('turbo') ? 3000 : 100, { text: model.endsWith('turbo') ? '아니' : '보내' }));
+    let calls = 0;
+    const ai = fakeAi(() => later(++calls === 1 ? 3000 : 100, { text: calls === 1 ? '아니' : '보내' }));
     const pending = handleConfirm(ai, freshAudio(), Date.now() + 4800, { reserve, observe });
     await vi.advanceTimersByTimeAsync(1399); expect(ai.run).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(1); expect(ai.run).toHaveBeenCalledTimes(2);
-    expect((ai.run as any).mock.calls[1]).toMatchObject(['@cf/openai/whisper', { audio: Array.from(wav(320, 2000)) }]);
+    expect((ai.run as any).mock.calls[1]).toMatchObject(['@cf/openai/whisper-large-v3-turbo', {
+      audio: audio.data, task: 'transcribe', language: 'ko', vad_filter: true, condition_on_previous_text: false,
+      initial_prompt: '짧은 한국어 확인 응답입니다. 가능한 응답: ' + REPLIES.join('. ') + '.',
+    }]);
     await vi.advanceTimersByTimeAsync(100);
     expect(await pending).toMatchObject({ transcript: '보내', match: { action: 'SEND', mode: 'exact' } });
     expect(reserve.mock.calls.map(x => x.slice(0, 2))).toEqual([['stt', 'primary'], ['stt', 'hedge']]);
@@ -39,41 +93,46 @@ describe('voice stage hedges', () => {
     await vi.advanceTimersByTimeAsync(1500);
   });
   it.each(['보내요', '바꿔요', '보내줘요', '바꿔줘요', '감사합니다 보내'])('keeps fallback confirm safe for %s', async text => {
-    vi.useFakeTimers(); const ai = fakeAi((model: string) => later(model.endsWith('turbo') ? 4000 : 10, { text }));
+    vi.useFakeTimers(); let calls = 0; const ai = fakeAi(() => later(++calls === 1 ? 4000 : 10, { text }));
     const pending = handleConfirm(ai, freshAudio(), Date.now() + 4800);
     await vi.advanceTimersByTimeAsync(2010);
     expect(['SEND', 'CHANGE']).not.toContain((await pending).match.action);
     await vi.advanceTimersByTimeAsync(1990);
   });
   it('returns the primary after a hedge starts, handles a late losing rejection, and tracks its lifetime', async () => {
-    vi.useFakeTimers(); const work: Promise<unknown>[] = [], observe = vi.fn(); let hedgePayload: { audio: number[] } | undefined;
-    const ai = fakeAi((model: string, payload: { audio: number[] }) => {
-      if (!model.endsWith('turbo')) hedgePayload = payload;
-      return later(model.endsWith('turbo') ? 1500 : 300, { text: '네' }, !model.endsWith('turbo'));
+    vi.useFakeTimers(); const work: Promise<unknown>[] = [], observe = vi.fn(), params: any[] = [];
+    const ai = fakeAi((model: string, payload: any) => {
+      params.push([model, payload]);
+      return later(params.length === 1 ? 1500 : 300, { text: '네' }, params.length === 2);
     });
     const pending = handleConfirm(ai, freshAudio(), Date.now() + 4800, { defer: p => work.push(p), observe });
     await vi.advanceTimersByTimeAsync(1500); expect((await pending).transcript).toBe('네');
-    expect(hedgePayload?.audio.some(value => value !== 0)).toBe(true);
+    expect(params).toHaveLength(2);
+    expect(params.map(([model]) => model)).toEqual(['@cf/openai/whisper-large-v3-turbo', '@cf/openai/whisper-large-v3-turbo']);
+    expect(params[1][1]).toEqual(params[0][1]);
     expect(observe).toHaveBeenLastCalledWith('stt', { hedged: true, winner: 'primary' });
     await vi.advanceTimersByTimeAsync(200); await Promise.all(work);
-    expect(hedgePayload?.audio.every(value => value === 0)).toBe(true);
     expect(work).toHaveLength(2);
+    expect(params[1][1].audio).toBe(audio.data);
   });
   it('releases the request audio after STT while keeping a losing inference input intact until it settles', async () => {
-    vi.useFakeTimers(); const work: Promise<unknown>[] = [];
+    vi.useFakeTimers(); const work: Promise<unknown>[] = [], params: any[] = [];
     const requestAudio = freshAudio();
-    let primaryPayload: any;
     const ai = fakeAi((model: string, payload: any) => {
-      if (model.endsWith('turbo')) { primaryPayload = payload; return later(3000, { text: '아니' }); }
-      return later(100, { text: '응' });
+      params.push([model, payload]);
+      return later(params.length === 1 ? 3000 : 100, { text: params.length === 1 ? '아니' : '응' });
     });
     const pending = handleConfirm(ai, requestAudio, Date.now() + 4800, { defer: p => work.push(p) });
     await vi.advanceTimersByTimeAsync(1500);
     expect((await pending).transcript).toBe('응');
     expect(requestAudio.data).toBe('');
-    expect(primaryPayload.audio).toBe(audio.data);
+    expect(params).toHaveLength(2);
+    expect(params.map(([model]) => model)).toEqual(['@cf/openai/whisper-large-v3-turbo', '@cf/openai/whisper-large-v3-turbo']);
+    expect(params[0][1]).toEqual(params[1][1]);
+    expect(params[0][1].audio).toBe(audio.data);
     await vi.advanceTimersByTimeAsync(1500);
     await Promise.all(work);
+    expect(params[0][1].audio).toBe(audio.data);
   });
   it('releases request audio when validation or the STT deadline fails', async () => {
     const malformed = { data: 'bad', mimeType: 'audio/wav' as const };
@@ -89,10 +148,11 @@ describe('voice stage hedges', () => {
   });
   it('does not let a losing hedge start after its reservation finishes past the primary winner', async () => {
     vi.useFakeTimers(); const requestAudio = freshAudio();
-    const reserve = vi.fn((_stage: string, call: string) => call === 'hedge' ? later(200, undefined) : undefined);
-    const ai = fakeAi((model: string) => later(model.endsWith('turbo') ? 1500 : 10, { text: '네' }));
+    const reserve = vi.fn((_stage: string, call: string) => call === 'hedge' ? later(700, undefined) : undefined);
+    let calls = 0;
+    const ai = fakeAi(() => later(++calls === 1 ? 1500 : 10, { text: '네' }));
     const pending = handleConfirm(ai, requestAudio, Date.now() + 4800, { reserve });
-    await vi.advanceTimersByTimeAsync(1500);
+    await vi.advanceTimersByTimeAsync(1800);
     expect((await pending).transcript).toBe('네');
     expect(requestAudio.data).toBe('');
     await vi.advanceTimersByTimeAsync(200);
@@ -144,6 +204,65 @@ describe('voice stage hedges', () => {
   });
 });
 
+describe('action transcription does not hedge', () => {
+  const audio = () => ({ data: bytesToBase64(wav(320, 2000)), mimeType: 'audio/wav' as const });
+  const modes = ['dictation', 'approval_mail', 'approval_calendar'] as const;
+
+  it.each(modes)('%s keeps only its primary STT call alive almost to the 8.5s budget', async mode => {
+    vi.useFakeTimers();
+    let resolvePrimary!: (result: { text: string }) => void;
+    const primary = new Promise<{ text: string }>(resolve => { resolvePrimary = resolve; });
+    const ai = fakeAi(() => primary);
+    const reserve = vi.fn();
+    const observe = vi.fn();
+    const requestAudio = audio();
+    const pending = transcribe(ai, requestAudio, mode, Date.now() + 8500, { reserve, observe });
+
+    await vi.advanceTimersByTimeAsync(8400);
+    expect(ai.run).toHaveBeenCalledTimes(1);
+    expect(reserve.mock.calls.map(call => call.slice(0, 2))).toEqual([['stt', 'primary']]);
+    expect(observe).not.toHaveBeenCalledWith('stt', { hedged: true, winner: 'hedge' });
+
+    resolvePrimary({ text: mode === 'dictation' ? '내일 일정 확인해 주세요.' : '보내.' });
+    await expect(pending).resolves.toBe(mode === 'dictation' ? '내일 일정 확인해 주세요.' : '보내.');
+    expect(ai.run).toHaveBeenCalledTimes(1);
+    expect(reserve.mock.calls.map(call => call.slice(0, 2))).toEqual([['stt', 'primary']]);
+    expect(observe).toHaveBeenLastCalledWith('stt', { hedged: false, winner: 'primary' });
+    expect(requestAudio.data).toBe('');
+  });
+
+  it.each(modes)('%s does not start a hedge after the primary rejects', async mode => {
+    vi.useFakeTimers();
+    const ai = fakeAi(() => Promise.reject(Error('primary failed')));
+    const reserve = vi.fn();
+    const requestAudio = audio();
+    const pending = transcribe(ai, requestAudio, mode, Date.now() + 8500, { reserve });
+    const rejected = expect(pending).rejects.toThrow('primary failed');
+
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(8500);
+    await rejected;
+    expect(ai.run).toHaveBeenCalledTimes(1);
+    expect(reserve.mock.calls.map(call => call.slice(0, 2))).toEqual([['stt', 'primary']]);
+    expect(requestAudio.data).toBe('');
+  });
+
+  it.each(modes)('%s times out at 8.5s without a hedge or second AI call', async mode => {
+    vi.useFakeTimers();
+    const ai = fakeAi(() => new Promise<never>(() => {}));
+    const reserve = vi.fn();
+    const requestAudio = audio();
+    const pending = transcribe(ai, requestAudio, mode, Date.now() + 8500, { reserve });
+    const rejected = expect(pending).rejects.toThrow();
+
+    await vi.advanceTimersByTimeAsync(8500);
+    await rejected;
+    expect(ai.run).toHaveBeenCalledTimes(1);
+    expect(reserve.mock.calls.map(call => call.slice(0, 2))).toEqual([['stt', 'primary']]);
+    expect(requestAudio.data).toBe('');
+  });
+});
+
 describe('PCM audio guards', () => {
   it('measures silence, voiced frames, and the exact eight-second cap', () => {
     expect(inspectPcmWav(bytesToBase64(wav()))).toMatchObject({ activeRatio: 0, durationMs: 20 });
@@ -182,6 +301,41 @@ describe('PCM audio guards', () => {
     expect(calls[0][0]).toBe('@cf/openai/whisper-large-v3-turbo');
     expect(calls[0][1]).toMatchObject({ language: 'ko', task: 'transcribe', vad_filter: true, condition_on_previous_text: false,
       initial_prompt: '짧은 한국어 확인 응답입니다. 가능한 응답: ' + REPLIES.join('. ') + '.' });
+  });
+  it.each([
+    ['approval_mail', ['보내.', '보내줘.', '보내 줘.', '취소.', '아니.', '하지 마.', '보내지 마.']],
+    ['approval_calendar', ['추가해.', '추가해줘.', '추가해 줘.', '등록해.', '등록해줘.', '등록해 줘.', '취소.', '아니.', '하지 마.', '추가하지 마.', '등록하지 마.']],
+  ] as const)('uses a kind-specific approval prompt for %s', async (mode, expectedWords) => {
+    const ai = fakeAi(() => ({ text: '보내.' }));
+    await transcribe(ai, { data: bytesToBase64(wav(320, 1000)), mimeType: 'audio/wav' }, mode, Date.now() + 1000);
+    expect(ai.run).toHaveBeenCalledWith('@cf/openai/whisper-large-v3-turbo', expect.objectContaining({
+      initial_prompt: `짧은 한국어 승인 응답입니다. 가능한 응답: ${expectedWords.join(' ')}`,
+    }));
+  });
+  it.each(['turn', 'dictation'] as const)('does not add an approval hint to %s transcription', async mode => {
+    const ai = fakeAi(() => ({ text: '보내.' }));
+    await transcribe(ai, { data: bytesToBase64(wav(320, 1000)), mimeType: 'audio/wav' }, mode, Date.now() + 1000);
+    const [, payload] = (ai.run as any).mock.calls[0];
+    expect(payload).not.toHaveProperty('initial_prompt');
+  });
+  it('preserves complete dictated sentences with polite phrases and suppresses only whole hallucination phrases', async () => {
+    const audio = { data: bytesToBase64(wav(320, 2000)), mimeType: 'audio/wav' as const };
+    for (const dictated of ['네, 내일 오후 두 시 가능합니다. 감사합니다.', '네, 이 문장은 좋아요.']) {
+      const ai = fakeAi((model: string) => ({ text: model.includes('whisper') ? dictated : '' }));
+      expect(await transcribe(ai, { ...audio, data: audio.data }, 'dictation', Date.now() + 1000)).toBe(dictated);
+      expect(await transcribe(ai, { ...audio, data: audio.data }, 'turn', Date.now() + 1000)).toBe('');
+    }
+    for (const phrase of [' 감사합니다. ', '좋아요!', '구독.', 'SUBSCRIBE.']) {
+      const phraseAi = fakeAi(() => ({ text: phrase }));
+      expect(await transcribe(phraseAi, { ...audio, data: audio.data }, 'dictation', Date.now() + 1000)).toBe('');
+    }
+  });
+  it('keeps the dictation energy guard and zeroes audio', async () => {
+    const ai = fakeAi(() => { throw Error('must not call AI'); });
+    const silent = { data: bytesToBase64(wav(320, 0)), mimeType: 'audio/wav' as const };
+    expect(await transcribe(ai, silent, 'dictation', Date.now() + 1000)).toBe('');
+    expect(silent.data).toBe('');
+    expect(ai.run).not.toHaveBeenCalled();
   });
 });
 
@@ -380,23 +534,30 @@ describe('performance: independent voice stages', () => {
   it('starts Calendar and STT together and waits for both before the LLM', async () => {
     const { handleTurn } = await import('../src/voice');
     let resolveStt!: (value: unknown) => void, resolveCalendar!: (value: TodayCalendar) => void;
+    let markSttChecked!: () => void, resolveBothStarted!: () => void;
     let calendarStarted = false, sttStarted = false;
+    const bothStarted = new Promise<void>(resolve => { resolveBothStarted = resolve; });
+    const markBothStarted = () => { if (calendarStarted && sttStarted) resolveBothStarted(); };
+    const sttChecked = new Promise<void>(resolve => { markSttChecked = resolve; });
     const stt = new Promise(r => { resolveStt = r; });
     const calendarWork = new Promise<TodayCalendar>(r => { resolveCalendar = r; });
     const ai = fakeAi((model: string) => {
-      if (model.includes('whisper')) { sttStarted = true; return stt; }
+      if (model.includes('whisper')) { sttStarted = true; markBothStarted(); return stt; }
       return Response.json({ audio: bytesToBase64(wav(320, 1000)) });
     });
     const provider = { respond: vi.fn(async () => ({ text: '오늘 일정은 세 개예요.', toolCalls: [] })) };
+    const check = vi.fn(async () => { markSttChecked(); });
     const turn = handleTurn({ tripId: 'parallel', audio: { data: bytesToBase64(wav(320, 1000)), mimeType: 'audio/wav' } }, {
-      ai, deadlineAt: Date.now() + 4800, responseReadyAt: Date.now() + 3900, provider,
-      readCalendar: () => { calendarStarted = true; return calendarWork; }, check: async () => {},
+      ai, deadlineAt: Date.now() + 6000, responseReadyAt: Date.now() + 5100, provider,
+      readCalendar: () => { calendarStarted = true; markBothStarted(); return calendarWork; }, check,
     });
     try {
-      await vi.waitFor(() => expect(sttStarted).toBe(true));
+      await bothStarted;
       expect(calendarStarted).toBe(true);
+      expect(sttStarted).toBe(true);
       resolveStt({ text: '오늘 일정 알려줘.' });
-      await Promise.resolve(); expect(provider.respond).not.toHaveBeenCalled();
+      await sttChecked;
+      expect(provider.respond).not.toHaveBeenCalled();
     } finally { resolveStt({ text: '오늘 일정 알려줘.' }); resolveCalendar(calendar); await turn; }
     expect(provider.respond).toHaveBeenCalledTimes(1);
   });
@@ -404,7 +565,7 @@ describe('performance: independent voice stages', () => {
     const { handleTurn } = await import('../src/voice');
     const readCalendar = vi.fn(async () => calendar), ai = fakeAi(() => { throw Error('Unexpected AI'); });
     const result = await handleTurn({ tripId: 'silent', audio: { data: bytesToBase64(wav()), mimeType: 'audio/wav' } }, {
-      ai, deadlineAt: Date.now() + 4800, responseReadyAt: Date.now() + 3900, readCalendar, check: async () => {},
+      ai, deadlineAt: Date.now() + 6000, responseReadyAt: Date.now() + 5100, readCalendar, check: async () => {},
     });
     expect(result.sentences).toEqual([]); expect(readCalendar).not.toHaveBeenCalled(); expect(ai.run).not.toHaveBeenCalled();
   });
@@ -412,7 +573,7 @@ describe('performance: independent voice stages', () => {
     const { handleTurn } = await import('../src/voice');
     const readCalendar = vi.fn(async () => { throw Error('Calendar failed'); });
     const result = await handleTurn({ tripId: 'guard', audio: { data: bytesToBase64(wav(320, 1000)), mimeType: 'audio/wav' } }, {
-      ai: fakeAi(() => ({ text: '구독 좋아요' })), deadlineAt: Date.now() + 4800, responseReadyAt: Date.now() + 3900, readCalendar, check: async () => {},
+      ai: fakeAi(() => ({ text: '구독 좋아요' })), deadlineAt: Date.now() + 6000, responseReadyAt: Date.now() + 5100, readCalendar, check: async () => {},
     });
     expect(readCalendar).toHaveBeenCalledTimes(1); expect(result.sentences).toEqual([]);
   });
@@ -491,7 +652,7 @@ describe('speculative Calendar request lifetime', () => {
     const background: Promise<unknown>[] = [];
     const defer = vi.fn((work: Promise<unknown>) => { background.push(work); });
     const turn = handleTurn({ tripId: 'lifetime', audio: { data: bytesToBase64(wav(320, 1000)), mimeType: 'audio/wav' } }, {
-      ai: fakeAi(() => ({ text: '구독 좋아요' })), deadlineAt: Date.now() + 4800, responseReadyAt: Date.now() + 3900,
+      ai: fakeAi(() => ({ text: '구독 좋아요' })), deadlineAt: Date.now() + 6000, responseReadyAt: Date.now() + 5100,
       readCalendar: () => pending, check: async () => {}, defer,
     });
     try {
@@ -504,7 +665,8 @@ describe('speculative Calendar request lifetime', () => {
 describe('stage timing instrumentation', () => {
   it('measures elapsed time through a hedged winner and reports only fixed metadata', async () => {
     vi.useFakeTimers(); const measure = vi.fn(), observe = vi.fn();
-    const ai = fakeAi((model: string) => new Promise(resolve => setTimeout(() => resolve({ text: '네' }), model.endsWith('turbo') ? 3000 : 100)));
+    let calls = 0;
+    const ai = fakeAi(() => new Promise(resolve => setTimeout(() => resolve({ text: '네' }), ++calls === 1 ? 3000 : 100)));
     const result = handleConfirm(ai, { data: bytesToBase64(wav(320, 2000)), mimeType: 'audio/wav' }, Date.now() + 4800, { measure, observe });
     await vi.advanceTimersByTimeAsync(1500);
     expect((await result).match.action).toBe('LISTEN');
@@ -519,8 +681,8 @@ describe('real-account turn latency regression', () => {
   it('keeps the turn fallback at 1000ms and restores confirm to 1400ms', async () => {
     vi.useFakeTimers();
     const audio = { data: bytesToBase64(wav(320, 2000)), mimeType: 'audio/wav' as const };
-    const responder = (model: string) => new Promise(resolve => setTimeout(() => resolve({ text: '네' }), model.endsWith('turbo') ? 3000 : 100));
-    const turnAi = fakeAi(responder), confirmAi = fakeAi(responder);
+    const responder = () => { let calls = 0; return () => new Promise(resolve => setTimeout(() => resolve({ text: '네' }), ++calls === 1 ? 3000 : 100)); };
+    const turnAi = fakeAi(responder()), confirmAi = fakeAi(responder());
     const turn = transcribe(turnAi, audio, 'turn', Date.now() + 4800);
     const confirm = handleConfirm(confirmAi, audio, Date.now() + 4800);
     await vi.advanceTimersByTimeAsync(999);
@@ -537,7 +699,8 @@ describe('real-account turn latency regression', () => {
 describe('three-day confirm quality veto', () => {
   it('restores its first-valid fallback at 1400ms without replacing Turbo primary', async () => {
     vi.useFakeTimers(); const observe = vi.fn();
-    const ai = fakeAi((model: string) => new Promise(resolve => setTimeout(() => resolve({text: '보내지 마'}), model.endsWith('turbo') ? 3000 : 100)));
+    let calls = 0;
+    const ai = fakeAi(() => new Promise(resolve => setTimeout(() => resolve({text: '보내지 마'}), ++calls === 1 ? 3000 : 100)));
     const pending = handleConfirm(ai, {data:bytesToBase64(wav(320,2000)),mimeType:'audio/wav'}, Date.now()+3900, {observe});
     await vi.advanceTimersByTimeAsync(1399); expect(ai.run).toHaveBeenCalledTimes(1);
     expect((ai.run as any).mock.calls[0][0]).toBe('@cf/openai/whisper-large-v3-turbo');

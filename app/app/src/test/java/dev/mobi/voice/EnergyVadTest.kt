@@ -3,6 +3,13 @@ import org.junit.Assert.*
 import org.junit.Test
 class EnergyVadTest {
  private fun frame(v:Int)=ShortArray(320){v.toShort()}
+ @Test fun holdDetectsSpeechAfterTwelveSecondsOfSilenceWithoutEndingOrResettingCapture() {
+  val vad=EnergyVad(CaptureMode.HOLD)
+  repeat(600){assertFalse("hold must not end on silence",vad.push(frame(0)))}
+  repeat(4){assertFalse(vad.push(frame(500)));assertFalse(vad.voiced)}
+  assertFalse(vad.push(frame(500)));assertTrue(vad.voiced)
+  repeat(34){assertFalse(vad.push(frame(0)))};assertTrue(vad.push(frame(0)))
+ }
  @Test fun confirmAndQuestionUseDifferentSilenceAndEightSecondCap() {
   for ((mode,count) in listOf(CaptureMode.CONFIRM to 25,CaptureMode.QUESTION to 35)) {
    val vad=EnergyVad(mode); repeat(5){assertFalse(vad.push(frame(500)))}

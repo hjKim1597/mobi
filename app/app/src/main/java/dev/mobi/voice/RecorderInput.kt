@@ -29,6 +29,10 @@ class RecorderInput internal constructor(
     private val worker = Executors.newSingleThreadExecutor()
     private var current: CancelHandle? = null
     override fun start(mode: CaptureMode, allowed: () -> Boolean, voiceStarted: () -> Unit, result: (Result<AudioClip>) -> Unit): CancelHandle {
+        return start(mode, allowed, voiceStarted, result, ready = {})
+    }
+    override fun start(mode: CaptureMode, allowed: () -> Boolean, voiceStarted: () -> Unit,
+        result: (Result<AudioClip>) -> Unit, ready: () -> Unit): CancelHandle {
         current?.cancel()
         val cancelled = AtomicBoolean(false)
         val recorder = AtomicReference<AudioRecord?>()
@@ -46,27 +50,30 @@ class RecorderInput internal constructor(
                 audio = created; recorder.set(created)
                 check(created.state == AudioRecord.STATE_INITIALIZED)
                 created.startRecording(); check(created.recordingState == AudioRecord.RECORDSTATE_RECORDING)
+                check(!cancelled.get() && allowed() && context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED)
                 val start = SystemClock.elapsedRealtime()
                 val vad = EnergyVad(mode)
                 var notified = false
                 Log.i("Mobi", "RECORD_START atMs=$start")
+                ready()
                 while (!cancelled.get() && allowed()) {
                     check(context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED)
                     val count = read(created, frame)
                     check(count > 0)
                     check(context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED)
                     check(silenced(created) != true) // Configuration may not yet be available at startup.
-                    val n = count.coerceAtMost(pcm.size - vad.samples)
+                    val n = if (mode == CaptureMode.HOLD) count else count.coerceAtMost(pcm.size - vad.samples)
                     val rms = kotlin.math.sqrt((0 until n).sumOf { frame[it].toDouble() * frame[it] } / n)
                     maxRms = maxOf(maxRms, rms)
                     if (rms >= 200) { above++; consecutive++; longest = maxOf(longest, consecutive) } else consecutive = 0
-                    frame.copyInto(pcm, vad.samples, 0, n)
+                    if (mode != CaptureMode.HOLD) frame.copyInto(pcm, vad.samples, 0, n)
                     val ended = vad.push(frame, n)
                     if (vad.voiced && !notified) { notified = true; voiceStarted() }
                     if (ended || !vad.voiced && mode == CaptureMode.CONFIRM && vad.samples >= 96000) break
                 }
                 check(!cancelled.get() && allowed() && context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED)
-                val captured = pcm.copyOf(vad.samples)
+                // Holding needs only speech onset, never a recording or transcription payload.
+                val captured = if (mode == CaptureMode.HOLD) ShortArray(1) else pcm.copyOf(vad.samples)
                 capturedPcm = captured
                 clip = AudioClip(AudioClip.wav(captured), start + vad.lastVoicedSample / 16, vad.voiced)
                 Log.i("Mobi", "RECORD_RESULT voiced=${vad.voiced} samples=${vad.samples} endpointMs=${SystemClock.elapsedRealtime()} lastVoiceMs=${clip.lastVoicedAtMillis}")

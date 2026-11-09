@@ -4,7 +4,7 @@ import dev.mobi.net.CancelHandle
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
-enum class CaptureMode { CONFIRM, QUESTION }
+enum class CaptureMode { CONFIRM, QUESTION, HOLD }
 
 data class AudioClip(val wav: ByteArray, val lastVoicedAtMillis: Long, val voiced: Boolean) {
     companion object {
@@ -22,4 +22,7 @@ data class AudioClip(val wav: ByteArray, val lastVoicedAtMillis: Long, val voice
 
 interface VoiceInput : AutoCloseable {
     fun start(mode: CaptureMode, allowed: () -> Boolean, voiceStarted: () -> Unit, result: (Result<AudioClip>) -> Unit): CancelHandle
+    /** Legacy inputs cannot promise readiness; cancellation monitoring must fail closed for them. */
+    fun start(mode: CaptureMode, allowed: () -> Boolean, voiceStarted: () -> Unit,
+        result: (Result<AudioClip>) -> Unit, ready: () -> Unit): CancelHandle = start(mode, allowed, voiceStarted, result)
 }

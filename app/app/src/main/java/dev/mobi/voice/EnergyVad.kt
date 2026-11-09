@@ -12,8 +12,8 @@ class EnergyVad(
     private var consecutive = 0
     fun push(frame: ShortArray, count: Int = frame.size): Boolean {
         require(count in 0..frame.size)
-        if (count == 0) return samples >= 128000
-        val n = count.coerceAtMost(128000 - samples)
+        if (count == 0) return mode != CaptureMode.HOLD && samples >= 128000
+        val n = if (mode == CaptureMode.HOLD) count else count.coerceAtMost(128000 - samples)
         if (n <= 0) return true
         val rms = sqrt((0 until n).sumOf { frame[it].toDouble() * frame[it] } / n)
         samples += n
@@ -23,7 +23,7 @@ class EnergyVad(
             if (voiced) lastVoicedSample = samples
         } else consecutive = 0
         val silence = if (mode == CaptureMode.CONFIRM) CONFIRM_ENDPOINT_SILENCE_SAMPLES else QUESTION_ENDPOINT_SILENCE_MS * 16
-        return samples >= 128000 || voiced && samples - lastVoicedSample >= silence
+        return mode != CaptureMode.HOLD && samples >= 128000 || voiced && samples - lastVoicedSample >= silence
     }
 
     companion object {

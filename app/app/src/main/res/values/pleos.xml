@@ -1,0 +1,11 @@
+<resources>
+    <!-- General button selector: immediate state change, without a ripple or scale. -->
+    <integer name="pleos_press_enter_ms">0</integer>
+    <integer name="pleos_press_exit_ms">0</integer>
+    <!-- Closest observed in-app content role: vehicle settings opacity replacement. -->
+    <integer name="pleos_content_enter_ms">200</integer>
+    <integer name="pleos_content_exit_ms">200</integer>
+    <dimen name="pleos_surface_radius">0dp</dimen>
+    <dimen name="pleos_button_stroke_width">1dp</dimen>
+    <bool name="pleos_light_system_bars">true</bool>
+</resources>

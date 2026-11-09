@@ -14,7 +14,7 @@ spec.loader.exec_module(harness)
 
 class HarnessPrivacyTest(unittest.TestCase):
     def test_tracked_signing_password_key_fails_without_disclosing_value(self):
-        with tempfile.TemporaryDirectory(dir=harness.ROOT / ".context/submit-prep") as directory:
+        with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             marker = "PRIVATE_PROPERTY_VALUE_FIXTURE"
             (root / "gradle.properties").write_text("mobiReleaseStorePassword=" + marker + "\n")
@@ -26,7 +26,7 @@ class HarnessPrivacyTest(unittest.TestCase):
 
     def test_password_key_colon_and_whitespace_separators_fail(self):
         for line in ("mobiReleaseKeyPassword : PRIVATE_FIXTURE", "mobiReleaseOtherPassword PRIVATE_FIXTURE"):
-            with self.subTest(line=line), tempfile.TemporaryDirectory(dir=harness.ROOT / ".context/submit-prep") as directory:
+            with self.subTest(line=line), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 (root / "gradle.properties").write_text(line)
                 with patch.object(harness, "ROOT", root), patch.object(harness, "run", return_value=b"gradle.properties\0"):
@@ -35,7 +35,7 @@ class HarnessPrivacyTest(unittest.TestCase):
                 self.assertNotIn("PRIVATE_FIXTURE", str(failure.exception))
 
     def test_comments_and_untracked_private_properties_are_not_rejected(self):
-        with tempfile.TemporaryDirectory(dir=harness.ROOT / ".context/submit-prep") as directory:
+        with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "gradle.properties").write_text("# mobiReleaseStorePassword=example\n! mobiReleaseKeyPassword=example\norg.gradle.jvmargs=-Xmx2g\n")
             (root / "private.properties").write_text("mobiReleaseStorePassword=PRIVATE_FIXTURE\n")

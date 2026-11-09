@@ -9,4 +9,14 @@ class RequestDeadlineTest {
   now=6099; assertEquals(1L,d.remainingMillis()); now=6100; assertTrue(d.expired)
   now=100; val c=RequestDeadline(Clock { now },6100); c.cancel(); assertEquals(0L,c.remainingMillis())
  }
+
+ @Test fun apiClientKeepsSixSecondDefaultAndCanCreateLongerActionDeadline() {
+  var now = 100L
+  ApiClient("https://example.test", clock = Clock { now }).use { api ->
+   assertEquals(6100L, api.deadline().expiresAtMillis)
+   assertEquals(9600L, api.deadline(9500).expiresAtMillis)
+   now = 500L
+   assertEquals(6500L, api.deadline(6000).expiresAtMillis)
+  }
+ }
 }

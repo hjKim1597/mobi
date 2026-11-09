@@ -1,0 +1,19 @@
+<resources>
+    <color name="pleos_surface">#151515</color>
+    <color name="pleos_text">#DDDDDD</color>
+    <color name="pleos_secondary">#BCBABA</color>
+    <color name="pleos_divider">#333333</color>
+    <color name="pleos_active">#1262F5</color>
+    <color name="pleos_primary_fill">#DDDDDD</color>
+    <color name="pleos_primary_pressed">#99FFFFFF</color>
+    <color name="pleos_primary_disabled">#66FFFFFF</color>
+    <color name="pleos_primary_text">#000000</color>
+    <color name="pleos_primary_text_pressed">#CC000000</color>
+    <color name="pleos_primary_text_disabled">#66000000</color>
+    <color name="pleos_secondary_fill">#3F3F3F</color>
+    <color name="pleos_secondary_pressed">#14FFFFFF</color>
+    <color name="pleos_secondary_disabled">#0AFFFFFF</color>
+    <color name="pleos_secondary_text">#C5C5C5</color>
+    <color name="pleos_secondary_text_pressed">#CCC5C5C5</color>
+    <color name="pleos_secondary_text_disabled">#66C5C5C5</color>
+</resources>

@@ -96,8 +96,8 @@ class TripDetector(
 
     private fun nextTripId(current: Long) = if (current == Long.MAX_VALUE) 1L else current + 1L
 
-    private companion object {
-        const val CURRENT_SCHEMA = 1
+    companion object {
+        private const val CURRENT_SCHEMA = 1
         const val PARK_THRESHOLD_MILLIS = 600_000L
     }
 }

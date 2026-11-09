@@ -1,10 +1,11 @@
 import { DurableObject } from 'cloudflare:workers';
-import { createDeadline, exchangeCode, GoogleError, googleConfig, refreshTokens, revokeToken, type TokenPayload } from './google';
+import { createDeadline, exchangeCode, GoogleError, googleConfig, googleCapabilities, googleJson, refreshTokens, revokeToken, type TokenPayload } from './google';
 import { decryptTokens, encryptTokens, validateEncryptionKey } from './token-crypto';
 import { fetchToday, dayBounds } from './calendar';
 import { createBriefingCacheEntry, getCompatibleBriefing, type BriefingAudio, type BriefingCacheEntry, type BriefingCacheKey } from './briefing-cache';
 import { withDeadline } from './deadline';
-import type { CalendarTiming } from './timing';
+import { ActionRequestTiming, type CalendarTiming } from './timing';
+import { DeviceActions, ActionError, type ActionInput, type ApprovalInput, type ActionRpcResult } from './actions';
 
 type TodayResult = { status: 200; data: Awaited<ReturnType<typeof fetchToday>> } | { status: 403 | 500 | 502 };
 
@@ -42,6 +43,7 @@ export class DeviceAgent extends DurableObject<Env> {
   private todayCache?: { epoch: number; expiresAt: number; data: Awaited<ReturnType<typeof fetchToday>> };
   private todayInFlight?: { epoch: number; now: number; promise: Promise<TodayResult>; timing: CalendarTiming };
   private briefingCache?: BriefingCacheEntry;
+  private actions: DeviceActions;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -50,7 +52,70 @@ export class DeviceAgent extends DurableObject<Env> {
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS connection_state (id INTEGER PRIMARY KEY CHECK (id = 1), epoch INTEGER NOT NULL DEFAULT 0, attempt_id TEXT)');
     ctx.storage.sql.exec('INSERT OR IGNORE INTO connection_state (id) VALUES (1)');
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS google_connection (id INTEGER PRIMARY KEY CHECK (id = 1), device_id TEXT NOT NULL, envelope TEXT NOT NULL)');
+    this.actions = new DeviceActions(ctx, env, {
+      epoch: () => this.getConnectionState().epoch,
+      connection: signal => this.actionConnection(signal),
+      timeZone: async (token, signal) => {
+        if (this.todayCache && this.todayCache.epoch === this.getConnectionState().epoch && this.todayCache.expiresAt > Date.now()) return this.todayCache.data.timeZone;
+        const raw = await googleJson(new URL('https://www.googleapis.com/calendar/v3/calendars/primary'), token, signal) as { timeZone?: unknown };
+        if (typeof raw.timeZone !== 'string' || raw.timeZone.length > 100) throw new ActionError(502);
+        try { new Intl.DateTimeFormat('en', { timeZone: raw.timeZone }); } catch { throw new ActionError(502); }
+        return raw.timeZone;
+      },
+      invalidateCalendar: () => { this.todayCache = undefined; this.todayInFlight = undefined; this.briefingCache = undefined; },
+    });
   }
+
+  private async actionConnection(signal: AbortSignal): Promise<{ epoch: number; tokens: TokenPayload }> {
+    const epoch = this.getConnectionState().epoch;
+    const row = this.ctx.storage.sql.exec<{ device_id: string; envelope: string }>('SELECT device_id,envelope FROM google_connection WHERE id=1').toArray()[0];
+    if (!row) throw new ActionError(403);
+    try {
+      let tokens = await decryptTokens(this.env.TOKEN_ENCRYPTION_KEY!, row.device_id, JSON.parse(row.envelope));
+      if (!this.current(epoch) || signal.aborted) throw new ActionError(403);
+      if (tokens.expiresAt <= Date.now() + 60_000) tokens = await this.refresh(epoch, row.device_id, tokens, signal);
+      if (!this.current(epoch) || signal.aborted) throw new ActionError(403);
+      return { epoch, tokens };
+    } catch (cause) {
+      if (cause instanceof GoogleError && cause.kind === 'auth') this.clearConnection(epoch);
+      throw cause;
+    }
+  }
+
+  async actionCapabilities() {
+    const row = this.ctx.storage.sql.exec<{ device_id: string; envelope: string }>('SELECT device_id,envelope FROM google_connection WHERE id=1').toArray()[0];
+    if (!row) return googleCapabilities([]);
+    const epoch = this.getConnectionState().epoch;
+    const tokens = await decryptTokens(this.env.TOKEN_ENCRYPTION_KEY!, row.device_id, JSON.parse(row.envelope));
+    return googleCapabilities(this.current(epoch) ? tokens.scopes : []);
+  }
+  // Return bounded error data across RPC: provider errors/private exceptions never
+  // escape into workerd's uncaught RPC exception logs.
+  private async actionRpc<T>(operation: () => T | Promise<T>): Promise<ActionRpcResult<T>> {
+    try { return await operation(); }
+    catch (cause) { return { actionError: cause instanceof ActionError ? cause.status : 502 }; }
+  }
+  async actionScan(tripId: string, epoch: number, deadlineAt: number) { return this.actionRpc(() => this.actions.scan(tripId, epoch, deadlineAt)); }
+  async actionScanMeasured(tripId: string, epoch: number, deadlineAt: number) {
+    const timing = new ActionRequestTiming('/v1/mail/scan');
+    const result = await this.actionRpc(() => timing.measure('google_scan', () => this.actions.scan(tripId, epoch, deadlineAt, timing)));
+    return { result, timing: timing.snapshot() };
+  }
+  async actionExisting(requestId: string, fingerprint: string) { return this.actionRpc(() => this.actions.existing(requestId, fingerprint)); }
+  async actionReadback(id: string, epoch: number) { return this.actionRpc(() => this.actions.readback(id, epoch)); }
+  async actionPropose(input: ActionInput, epoch: number, fingerprint: string, deadlineAt: number) { return this.actionRpc(() => this.actions.propose(input, epoch, fingerprint, deadlineAt)); }
+  async actionClarify(id: string, version: number, text: string, epoch: number) { return this.actionRpc(() => this.actions.clarify(id, version, text, epoch)); }
+  async actionApprove(id: string, input: ApprovalInput, epoch: number, holdAudioMs = 1000) {
+    return this.actionRpc(async () => {
+      const result = this.actions.approve(id, input, epoch, holdAudioMs);
+      await this.actions.arm();
+      return result;
+    });
+  }
+  async actionCancel(id: string) { return this.actionRpc(() => this.actions.cancel(id)); }
+  async actionNotApproved(id: string, epoch: number, version?: number, contentHash?: string) { return this.actionRpc(() => this.actions.notApproved(id, epoch, version, contentHash)); }
+  async actionStatus(id: string) { return this.actionRpc(() => this.actions.status(id)); }
+  async alarm() { await this.actions.alarm(); }
 
   register(tokenHash: string): void {
     this.briefingCache = undefined;
@@ -86,6 +151,7 @@ export class DeviceAgent extends DurableObject<Env> {
       this.todayCache = undefined;
       this.todayInFlight = undefined;
       this.briefingCache = undefined;
+      this.actions.clear();
       this.ctx.storage.sql.exec('DELETE FROM google_connection');
       this.ctx.storage.sql.exec('UPDATE connection_state SET epoch = epoch + 1, attempt_id = NULL WHERE id = 1');
       this.ctx.storage.sql.exec('UPDATE device SET paired = 0 WHERE id = 1');
@@ -111,6 +177,7 @@ export class DeviceAgent extends DurableObject<Env> {
         this.todayCache = undefined;
         this.todayInFlight = undefined;
         this.briefingCache = undefined;
+        this.actions.clear();
         return true;
       });
       if (committed) return 'connected';

@@ -7,10 +7,14 @@ import { withDeadline, assertBeforeDeadline, VOICE_STAGE_ADMISSION, VoiceDeadlin
 import { handleConfirm, handleTurn, buildBriefing, synthesize, VoiceHttpError } from './voice';
 import { selectKnock } from './knock';
 import type { TodayCalendar } from './calendar';
-import { AiRequestTiming, type RpcSpan } from './timing';
+import { ActionRequestTiming, actionRouteLabel, AiRequestTiming, type RpcSpan } from './timing';
 import { routeCalendarQuestion } from './calendar-router';
 import { fingerprintCalendar, type BriefingCacheKey } from './briefing-cache';
 import { failureSentences } from './failure-audio';
+import { actionRequests } from './action-schemas';
+import { ActionError, unwrapAction } from './actions';
+import { handleActionHttp, speakProposal, type ActionHttpContext } from './action-http';
+import { actionHandoffSentence } from './action-handoff-audio';
 export { DeviceAgent, Pairing } from './state';
 
 type Route = {
@@ -20,7 +24,7 @@ type Route = {
   ai?: boolean;
   body?: z.ZodType;
   registration?: boolean;
-  handler?: 'pairing' | 'today' | 'disconnect' | 'briefings' | 'confirm' | 'turns';
+  handler?: 'pairing' | 'today' | 'disconnect' | 'briefings' | 'confirm' | 'turns' | 'actions';
 };
 
 const routes: Route[] = [
@@ -34,8 +38,14 @@ const routes: Route[] = [
   { method: 'POST', path: /^\/v1\/briefings$/, ai: true, body: requestSchemas.briefings, handler: 'briefings' },
   { method: 'POST', path: /^\/v1\/confirm$/, ai: true, body: requestSchemas.confirm, handler: 'confirm' },
   { method: 'POST', path: /^\/v1\/turns$/, ai: true, body: requestSchemas.turns, handler: 'turns' },
-  { method: 'POST', path: /^\/v1\/actions\/[A-Za-z0-9_-]{1,64}\/approve$/, body: requestSchemas.approve },
-  { method: 'POST', path: /^\/v1\/actions\/[A-Za-z0-9_-]{1,64}\/cancel$/, body: requestSchemas.cancel },
+  { method: 'GET', path: /^\/v1\/capabilities$/, handler: 'actions' },
+  { method: 'POST', path: /^\/v1\/mail\/scan$/, ai: true, body: actionRequests.scan, handler: 'actions' },
+  { method: 'POST', path: /^\/v1\/actions\/proposals$/, ai: true, body: actionRequests.propose, handler: 'actions' },
+  { method: 'POST', path: /^\/v1\/actions\/[A-Za-z0-9_-]{1,64}\/readback$/, ai: true, body: requestSchemas.cancel, handler: 'actions' },
+  { method: 'POST', path: /^\/v1\/actions\/[A-Za-z0-9_-]{1,64}\/clarify$/, ai: true, body: actionRequests.clarify, handler: 'actions' },
+  { method: 'POST', path: /^\/v1\/actions\/[A-Za-z0-9_-]{1,64}\/approve$/, body: actionRequests.approve, handler: 'actions' },
+  { method: 'POST', path: /^\/v1\/actions\/[A-Za-z0-9_-]{1,64}\/cancel$/, body: requestSchemas.cancel, handler: 'actions' },
+  { method: 'GET', path: /^\/v1\/actions\/[A-Za-z0-9_-]{1,64}$/, handler: 'actions' },
 ];
 
 type JsonStatus = ResponseStatus | keyof typeof additionalResponseSchemas;
@@ -110,7 +120,7 @@ async function readBody(request: Request, signal?: AbortSignal, timing?: AiReque
   }
 }
 
-async function handle(request: Request, env: Env, deadlineAt?: number, signal?: AbortSignal, execution?: ExecutionContext, timing?: AiRequestTiming): Promise<Response> {
+async function handle(request: Request, env: Env, receivedAt: number, deadlineAt?: number, signal?: AbortSignal, execution?: ExecutionContext, timing?: AiRequestTiming, actionTiming?: ActionRequestTiming): Promise<Response> {
   const step = async <T>(work: () => Promise<T>, span?: RpcSpan): Promise<T> => {
     const startedAt = Date.now();
     try { return await (deadlineAt === undefined ? work() : withDeadline(deadlineAt, async () => work())); }
@@ -145,7 +155,7 @@ async function handle(request: Request, env: Env, deadlineAt?: number, signal?: 
     const auth = await step(() => device!.authenticate(tokenHash), 'authenticationMs');
     if (!auth) return error(401, 'UNAUTHORIZED', 'Valid device credentials required.');
     paired = auth.paired;
-    epoch = route.ai ? auth.epoch : undefined;
+    epoch = route.ai || route.handler === 'actions' ? auth.epoch : undefined;
     if (route.ai && !paired) return error(403, 'PAIRING_REQUIRED', 'Pair this device before using AI.');
   }
 
@@ -201,6 +211,39 @@ async function handle(request: Request, env: Env, deadlineAt?: number, signal?: 
     if (result.status === 403) return error(403, 'PAIRING_REQUIRED', 'Pair this device before reading the calendar.');
     return error(result.status, 'INTERNAL_ERROR', 'Calendar could not be retrieved.');
   }
+  let actionAdmitted = !!route.ai;
+  const actionContext = (until: number): ActionHttpContext => ({
+    env, device: device!, epoch: epoch!, receivedAt, deadlineAt: until, timing: actionTiming,
+    check: () => actionTiming ? actionTiming.measure('rpc', checkEpoch) : checkEpoch(),
+    admit: async () => {
+      if (actionAdmitted) return;
+      actionAdmitted = true;
+      if (!paired || !await device!.consumeDaily(day, cap(env.DEVICE_DAILY_CAP)) || !await env.PAIRING.getByName('quota:global').consumeDaily(day, cap(env.GLOBAL_DAILY_CAP))) throw new ActionError(429);
+    },
+    hedge: {
+      defer: execution ? p => execution.waitUntil(p) : undefined,
+      reserve: async (_stage, _call, neurons) => {
+        if (!paired || !await env.PAIRING.getByName('quota:neurons').reserveNeurons(day, neurons)) throw new VoiceHttpError(502);
+      },
+    },
+  });
+  if (route.handler === 'actions' && device) {
+    actionTiming?.setStage('rpc');
+    try {
+      const result = await handleActionHttp(path, body, actionContext(deadlineAt ?? Date.now() + 8500));
+      actionTiming?.setStage('rpc');
+      await checkEpoch();
+      return json(200, result);
+    }
+    catch (cause) {
+      actionTiming?.fail(cause);
+      const remoteStatus = cause instanceof Error ? Number(cause.message.match(/ACTION_HTTP_(\d+)/)?.[1]) : 0;
+      const status = cause instanceof ActionError ? cause.status : remoteStatus || 502;
+      if (status === 429) return limited('DEVICE_DAILY_LIMIT', now);
+      if (status === 400 || status === 403 || status === 404 || status === 409 || status === 410) return error(status, status === 404 ? 'NOT_FOUND' : status === 403 ? 'PAIRING_REQUIRED' : 'BAD_REQUEST', 'Action request could not be completed.');
+      return error(502, 'INTERNAL_ERROR', 'Action request could not be completed.');
+    }
+  }
   if (route.ai && device && deadlineAt !== undefined) {
     const responseReadyAt = deadlineAt - 900;
     const cacheKey = async (calendar: TodayCalendar, text: string, tripId: string): Promise<BriefingCacheKey> => ({
@@ -244,6 +287,16 @@ async function handle(request: Request, env: Env, deadlineAt?: number, signal?: 
         turn = await handleTurn(body as z.infer<typeof requestSchemas.turns>, {
           ai: env.AI, deadlineAt, responseReadyAt, readCalendar, check: checkEpoch, defer: hedge.defer, hedge,
           observeAnswer: timing?.observeAnswer,
+          proposeCalendar: async (text, requestId) => {
+            const action = unwrapAction(await device!.actionPropose({ tripId: (body as z.infer<typeof requestSchemas.turns>).tripId, requestId, kind: 'calendar_insert', text }, epoch!, await digest(JSON.stringify({ requestId, text })), responseReadyAt));
+            const c = actionContext(responseReadyAt);
+            if (action.status === 'awaiting_approval') return {
+              actionProposalPending: { actionId: action.actionId, version: action.version },
+              sentences: [actionHandoffSentence],
+            };
+            const actionProposal = await speakProposal(action, c);
+            return { actionProposal, sentences: actionProposal.sentences.slice(0, 1) };
+          },
           onAnswerValidity: expiresAt => { answerExpiresAt = expiresAt; },
           readCached: async (calendar, answer, tripId) => {
             const key = await cacheKey(calendar, answer.text, tripId);
@@ -291,19 +344,24 @@ async function handle(request: Request, env: Env, deadlineAt?: number, signal?: 
 
 export default {
   async fetch(request: Request, env: Env, execution?: ExecutionContext): Promise<Response> {
+    const receivedAt = Date.now();
     const path = new URL(request.url).pathname;
     const timing = request.method === 'POST' && (path === '/v1/turns' || path === '/v1/confirm' || path === '/v1/briefings')
       ? new AiRequestTiming(path) : undefined;
+    const actionRoute = actionRouteLabel(path);
+    const actionTiming = actionRoute ? new ActionRequestTiming(actionRoute) : undefined;
     let response: Response;
     try {
-      if (/^\/v1\/(today|briefings|confirm|turns)$/.test(path)) {
-        const deadlineAt = Date.now() + 4_800;
-        response = await withDeadline(deadlineAt, signal => handle(request, env, deadlineAt, signal, execution, timing));
-      } else response = await handle(request, env);
+      if (/^\/v1\/(today|briefings|confirm|turns|capabilities)$/.test(path) || path.startsWith('/v1/mail/') || path.startsWith('/v1/actions/')) {
+        const deadlineAt = Date.now() + (actionRoute ? 8_500 : path === '/v1/turns' ? 6_000 : 4_800);
+        response = await withDeadline(deadlineAt, signal => handle(request, env, receivedAt, deadlineAt, signal, execution, timing, actionTiming));
+      } else response = await handle(request, env, receivedAt, undefined, undefined, execution, timing, actionTiming);
     } catch (cause) {
+      actionTiming?.fail(cause);
       response = cause instanceof VoiceDeadlineError ? error(502, 'INTERNAL_ERROR', 'Voice request could not be completed.') : error(500, 'INTERNAL_ERROR', 'Request could not be completed.');
     }
     timing?.log(response.status);
+    actionTiming?.log(response.status);
     return response;
   },
 } satisfies ExportedHandler<Env>;

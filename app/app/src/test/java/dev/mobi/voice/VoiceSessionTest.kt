@@ -46,6 +46,8 @@ class VoiceSessionTest {
         val confirmFailureAudio = WavAudio("confirm-failure")
         val questionFailureAudio = WavAudio("question-failure")
         var hasAudioFocus = true
+        val actionProposals = mutableListOf<Pair<Operation,ActionProposal>>()
+        val pendingProposals = mutableListOf<Pair<Operation,ActionProposalPending>>()
         val events = mutableListOf<String>(); val intents = mutableListOf<Intent>()
         val timers = mutableListOf<Pair<Long, () -> Unit>>()
         val session = VoiceSession(clock, input, output,
@@ -54,7 +56,9 @@ class VoiceSessionTest {
             { _, _, cb -> turnCallback = cb; CancelHandle { turnHandleCancellations++; events += "turn-request-cancelled" } },
             { delay, fn -> timers += now + delay to fn; CancelHandle { timers.removeAll { it.second === fn } } },
             { it() }, { true }, { hasAudioFocus }, { done -> effectDone = done; if (autoEffect) done() }, { events += it }, { intents += it }, {},
-            localFailureAudio = { mode -> if (!localFailuresEnabled) null else if (mode == CaptureMode.CONFIRM) confirmFailureAudio else questionFailureAudio })
+            localFailureAudio = { mode -> if (!localFailuresEnabled) null else if (mode == CaptureMode.CONFIRM) confirmFailureAudio else questionFailureAudio },
+            actionProposal = { operation, proposal -> actionProposals += operation to proposal },
+            actionProposalPending = { operation, pending -> pendingProposals += operation to pending })
         val audio = WavAudio("fixture")
         val offlineAudio = WavAudio("offline-fixture")
         val bundle = KnockBundle("knock-v1", "2026-10-24", "Asia/Seoul", 3,
@@ -130,7 +134,7 @@ class VoiceSessionTest {
         assertEquals(1, r.output.starts)
         r.session.listen(r.op(2), CaptureMode.QUESTION)
         r.input.callback!!(Result.success(AudioClip(AudioClip.wav(ShortArray(1600){1000}), 0, true)))
-        val late = r.turnCallback!!; r.expire()
+        val late = r.turnCallback!!; r.advanceTo(8000)
         late(Result.success(TurnResponse("id", "question", listOf(Sentence("late", r.audio)))))
         assertEquals(1, r.output.starts); assertTrue("deferred" in r.events)
     }
@@ -240,16 +244,31 @@ class VoiceSessionTest {
         assertTrue("complete" in server.events)
         assertFalse("deferred" in server.events)
     }
-    @Test fun questionReplyPreparationKeepsOriginalDeadlineAndRejectsLateStart() {
+    @Test fun questionReplyPreparationKeepsOriginalEightSecondDeadlineAndRejectsLateStart() {
         val r = Rig(); r.output.startImmediately = false; r.capture(CaptureMode.QUESTION)
         r.turnCallback!!(Result.success(TurnResponse("id", "오늘 일정 뭐야", listOf(Sentence("오늘 3개, 다음은 14:00예요.", r.audio)))))
         assertNotNull(r.session.operation)
-        r.advanceTo(6000)
+        r.advanceTo(8000)
         assertNull(r.session.operation)
         r.output.startCallback!!()
         assertTrue(r.output.played.size == 1)
         assertFalse("turn-started" in r.events)
         assertTrue("deferred" in r.events)
+    }
+    @Test fun questionResultAfterSixSecondsIsAcceptedAgainstLastVoicedEightSecondDeadline() {
+        val r = Rig()
+        r.session.listen(r.op(), CaptureMode.QUESTION)
+        r.now = 500 // Recorder callback arrives after speech ended at 100ms.
+        r.input.callback!!(Result.success(AudioClip(AudioClip.wav(ShortArray(1600) { 1000 }), 100, true)))
+
+        assertEquals(8100L, r.session.operation!!.deadline.expiresAtMillis)
+        r.now = 7300
+        r.turnCallback!!(Result.success(TurnResponse("id", "오늘 일정 뭐야", listOf(Sentence("오늘 3개예요.", r.audio)))))
+
+        assertEquals(listOf(r.audio), r.output.played)
+        assertTrue("turn-started" in r.events)
+        assertFalse("deferred" in r.events)
+        assertEquals(8100L, r.session.operation!!.deadline.expiresAtMillis)
     }
     @Test fun localFailurePreparationKeepsOriginalDeadlineAndRejectsLateStart() {
         val r = Rig(); r.localFailuresEnabled = true; r.output.startImmediately = false; r.capture(CaptureMode.CONFIRM)
@@ -263,9 +282,10 @@ class VoiceSessionTest {
         assertEquals(listOf(r.confirmFailureAudio), r.output.played)
         assertTrue("deferred" in r.events)
     }
-    @Test fun questionTimeoutPlaysLocalFailureWithinOriginalSixSecondCapAndDropsLateResult() {
+    @Test fun questionTimeoutKeepsTheEightSecondDeadlineAnd250msPresentationMargin() {
         val r = Rig(); r.localFailuresEnabled = true; r.capture(CaptureMode.QUESTION)
-        r.advanceTo(5750)
+        assertEquals(8000L, r.session.operation!!.deadline.expiresAtMillis)
+        r.advanceTo(7750)
         assertEquals(listOf(r.questionFailureAudio), r.output.played)
         assertEquals(1, r.turnHandleCancellations)
         assertTrue(r.events.indexOf("turn-request-cancelled") < r.events.indexOf("turn-failure-started"))
@@ -273,20 +293,21 @@ class VoiceSessionTest {
         val late = r.turnCallback!!
         late(Result.success(TurnResponse("late", "오늘 일정 뭐야", listOf(Sentence("late success", r.audio)))))
         assertEquals(listOf(r.questionFailureAudio), r.output.played)
-        assertTrue(r.now < 6000)
+        assertTrue(r.now < 8000)
     }
     @Test fun confirmTimeoutUsesOnlyTheConfirmFailureAsset() {
         val r = Rig(); r.localFailuresEnabled = true; r.capture(CaptureMode.CONFIRM)
+        assertEquals(6000L, r.session.operation!!.deadline.expiresAtMillis)
         r.advanceTo(5750)
         assertEquals(listOf(r.confirmFailureAudio), r.output.played)
         assertTrue("confirm-failure-started" in r.events)
         assertFalse("turn-failure-started" in r.events)
     }
-    @Test fun debugBaselineKeepsTheOriginalSixSecondTimeoutWithoutLocalFailureAudio() {
+    @Test fun debugBaselineKeepsTheEightSecondQuestionTimeoutWithoutLocalFailureAudio() {
         val r = Rig(); r.capture(CaptureMode.QUESTION)
-        r.advanceTo(5750)
+        r.advanceTo(7750)
         assertTrue(r.output.played.isEmpty()); assertFalse("deferred" in r.events)
-        r.advanceTo(6000)
+        r.advanceTo(8000)
         assertTrue("deferred" in r.events); assertTrue(r.output.played.isEmpty())
     }
     @Test fun returnedQuestionDegradedSentencePlaysOnceWithoutAppendingLocalFallback() {
@@ -328,5 +349,38 @@ class VoiceSessionTest {
         r.session.accept(r.session.operation!!)
         r.output.inputReady!!()
         assertFalse(r.input.active);assertEquals(2,r.output.starts)
+    }
+    @Test fun turnProposalTransfersOriginalOperationAndDoesNotSpeakOrdinaryAnswer() {
+        val r=Rig(); r.capture(CaptureMode.QUESTION)
+        val proposal=ActionProposal("action",1,"awaiting_approval","hash",emptyList(),ActionDisplay(title="회의"),90000,null)
+        r.turnCallback!!(Result.success(TurnResponse("turn","일정 추가해",emptyList(),proposal)))
+        assertEquals(1,r.actionProposals.size)
+        assertEquals(1L,r.actionProposals.single().first.tripId)
+        assertEquals(1L,r.actionProposals.single().first.generation)
+        assertEquals(proposal,r.actionProposals.single().second)
+        assertNull(r.session.operation); assertEquals(0,r.output.starts)
+    }
+    @Test fun staleTurnProposalCannotStartAnActionAfterVoiceSessionWasCancelled() {
+        val r=Rig(); r.capture(CaptureMode.QUESTION); val late=r.turnCallback!!
+        r.session.cancel()
+        val proposal=ActionProposal("action",1,"awaiting_approval","hash",emptyList(),ActionDisplay(title="회의"),90000,null)
+        late(Result.success(TurnResponse("turn","일정 추가해",emptyList(),proposal)))
+        assertTrue(r.actionProposals.isEmpty())
+    }
+    @Test fun pendingTurnPlaysShortSentenceBeforeHandingOffPendingReadback() {
+        val r = Rig(); r.capture(CaptureMode.QUESTION)
+        val pending = ActionProposalPending("action", 2)
+        val short = Sentence("일정 내용을 확인할게요.", r.audio)
+        r.turnCallback!!(Result.success(TurnResponse("turn", "일정 추가해", listOf(short), actionProposalPending = pending)))
+        assertTrue(r.pendingProposals.isEmpty()); assertEquals(listOf(r.audio), r.output.played)
+        r.output.completed!!()
+        assertEquals(1, r.pendingProposals.size); assertEquals(pending, r.pendingProposals.single().second)
+        assertEquals(1L, r.pendingProposals.single().first.tripId); assertEquals(1L, r.pendingProposals.single().first.generation)
+        assertTrue(r.actionProposals.isEmpty())
+    }
+    @Test fun stalePendingTurnCannotHandOffAfterVoiceSessionWasCancelled() {
+        val r = Rig(); r.capture(CaptureMode.QUESTION); val late = r.turnCallback!!; r.session.cancel()
+        late(Result.success(TurnResponse("turn", "일정 추가해", listOf(Sentence("확인할게요", r.audio)), actionProposalPending = ActionProposalPending("action", 1))))
+        assertTrue(r.pendingProposals.isEmpty())
     }
 }

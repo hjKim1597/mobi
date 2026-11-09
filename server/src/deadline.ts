@@ -38,7 +38,7 @@ export function trackInference<T>(value: T | Promise<T>, signal: AbortSignal, co
 
 export async function runHedged<T>(stage: VoiceStage, deadlineAt: number,
   operation: (call: 'primary' | 'hedge', signal: AbortSignal) => Promise<T>, context: HedgeContext = {},
-  hedgeAfterMs = HEDGE_TIMING[stage].after): Promise<T> {
+  hedgeAfterMs: number | null = HEDGE_TIMING[stage].after): Promise<T> {
   const startedAt = Date.now();
   let hedged = false, winner: 'primary' | 'hedge' | 'none' = 'none';
   const controllers: AbortController[] = [];
@@ -55,7 +55,7 @@ export async function runHedged<T>(stage: VoiceStage, deadlineAt: number,
       };
       const timing = HEDGE_TIMING[stage];
       const hedgeMinimum = Math.max(timing.p50, context.minimumRemaining?.[stage] ?? 0);
-      const canHedge = deadlineAt - Date.now() >= hedgeAfterMs + hedgeMinimum;
+      const canHedge = hedgeAfterMs !== null && deadlineAt - Date.now() >= hedgeAfterMs + hedgeMinimum;
       if (canHedge) expected = 2;
       const start = (call: 'primary' | 'hedge') => {
         const controller = new AbortController(); controllers.push(controller);
@@ -77,7 +77,7 @@ export async function runHedged<T>(stage: VoiceStage, deadlineAt: number,
         }).finally(() => signal.removeEventListener('abort', abort));
       };
       start('primary');
-      if (canHedge) timer = setTimeout(() => {
+      if (canHedge && hedgeAfterMs !== null) timer = setTimeout(() => {
         if (finished || signal.aborted) return;
         if (deadlineAt - Date.now() < hedgeMinimum) {
           expected = 1;

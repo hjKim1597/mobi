@@ -21,6 +21,8 @@ class VoiceSession(
     private val sentence: (Intent) -> Unit,
     private val phase: (String) -> Unit,
     private val localFailureAudio: (CaptureMode) -> WavAudio? = { null },
+    private val actionProposal: (Operation, ActionProposal) -> Unit = { _, _ -> },
+    private val actionProposalPending: (Operation, ActionProposalPending) -> Unit = { _, _ -> },
 ) : AutoCloseable {
     @Volatile var operation: Operation? = null; private set
     private val requests = mutableListOf<CancelHandle>()
@@ -134,7 +136,8 @@ class VoiceSession(
             capture = null; capturing = false
             result.fold({ clip ->
                 if (!clip.voiced || !permitted() || navigation) { clip.wav.fill(0); defer(); return@fold }
-                val requestOp = op.copy(deadline = RequestDeadline(clock, clip.lastVoicedAtMillis + 6000))
+                val requestBudgetMs = if (mode == CaptureMode.QUESTION) 8000L else 6000L
+                val requestOp = op.copy(deadline = RequestDeadline(clock, clip.lastVoicedAtMillis + requestBudgetMs))
                 operation = requestOp
                 val audio = try {
                     WavAudio(Base64.getEncoder().encodeToString(clip.wav))
@@ -210,7 +213,15 @@ class VoiceSession(
                             if (pendingResponse()) response.fold({ value ->
                                 if (!completeResponse()) return@fold
                                 val intent = Intent.classify(value.transcript)
-                                if (intent == Intent.DECLINE || intent == Intent.CANCEL) {
+                                if (value.actionProposal != null) {
+                                    cancel(); event("action-proposal"); actionProposal(requestOp, value.actionProposal)
+                                } else if (value.actionProposalPending != null) {
+                                    val acknowledgement = value.sentences.singleOrNull()
+                                    if (acknowledgement == null) { event("turn-result-error"); defer() }
+                                    else play(requestOp, acknowledgement.audio, { timer?.cancel(); event("turn-started") }, {
+                                        cancel(); event("action-proposal-pending"); actionProposalPending(requestOp, value.actionProposalPending)
+                                    })
+                                } else if (intent == Intent.DECLINE || intent == Intent.CANCEL) {
                                     event("turn-result-decision")
                                     sentence(intent); cancel()
                                 } else {

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { sanitizeTtsText } from '../src/tts';
+import { isSafeReplyBody, sanitizeTtsText } from '../src/tts';
 import { synthesize } from '../src/voice';
 
 const cases = [
@@ -26,6 +26,24 @@ const cases = [
 ] as const;
 
 describe('sanitizeTtsText', () => {
+  it.each(['A01회의', '프로젝트 007 회의', 'v2', '2A', 'é2', '00', '010 1234', '1,2,3번', '3.5', '10:30', '1234567'])('rejects ambiguous approved action text: %s', text => {
+    expect(isSafeReplyBody(text)).toBe(false);
+  });
+  it.each([
+    ['2026년', '이천이십육년'], ['3명', '삼명'], ['10시', '십시'], ['100명', '백명'], ['0명', '영명'],
+  ])('accepts and only pronounces the numeric run in approved action text: %s', (text, expected) => {
+    expect(isSafeReplyBody(text)).toBe(true);
+    expect(sanitizeTtsText(text, 'reply_readback')).toBe(expected);
+  });
+  it.each(['Sender01 님에게 회신할게요.', 'Sender2 님에게 회신할게요.', '김 007 님에게 회신할게요.'])('rejects ambiguous numbers in a complete approval readback: %s', text => {
+    expect(() => sanitizeTtsText(text, 'reply_readback')).toThrow();
+  });
+  it.each([
+    ['Alex Kim 님에게 \'네,괜찮아요!\'라고 회신할게요. 보내려면 \'보내\'라고 말씀해 주세요.', 'Alex Kim 님에게 \'네,괜찮아요!\'라고 회신할게요. 보내려면 \'보내\'라고 말씀해 주세요.'],
+    ['금액은 "3원"이고 수량은 2개입니다.', '금액은 "삼원"이고 수량은 이개입니다.'],
+  ])('preserves reply readback except numeric pronunciation: %s', (input, expected) => {
+    expect(sanitizeTtsText(input, 'reply_readback')).toBe(expected);
+  });
   it.each(cases)('normalizes %s', (input, expected) => {
     const result = sanitizeTtsText(input);
     expect(result).toBe(expected);
@@ -91,6 +109,16 @@ describe('sanitizeTtsText', () => {
 
 
 describe('TTS adapter boundary', () => {
+  it('passes the punctuation-preserving approved reply text to the real synthesis adapter', async () => {
+    const bytes = new Uint8Array(46), view = new DataView(bytes.buffer);
+    for (const [at, text] of [[0, 'RIFF'], [8, 'WAVE'], [12, 'fmt '], [36, 'data']] as const) [...text].forEach((c, i) => { bytes[at + i] = c.charCodeAt(0); });
+    view.setUint32(4, 38, true); view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true); view.setUint32(24, 16000, true); view.setUint32(28, 32000, true); view.setUint16(32, 2, true); view.setUint16(34, 16, true); view.setUint32(40, 2, true);
+    const run = vi.fn(async () => new Response(bytes));
+    const text = 'Alex 님에게 \'"3원"입니다.\'라고 회신할게요.';
+    const result = await synthesize({ run } as unknown as Ai, text, Date.now() + 1000, {}, 'reply_readback');
+    expect(result.text).toBe('Alex 님에게 \'"삼원"입니다.\'라고 회신할게요.');
+    expect(run.mock.calls[0]).toMatchObject(['@cf/myshell-ai/melotts', { prompt: result.text }, { returnRawResponse: true }]);
+  });
   it.each(cases)('sanitizes the actual MeloTTS prompt for %s', async (input, expected) => {
     const bytes = new Uint8Array(46), v = new DataView(bytes.buffer);
     for (const [at, value] of [[0, 'RIFF'], [8, 'WAVE'], [12, 'fmt '], [36, 'data']] as const) [...value].forEach((c, i) => { bytes[at + i] = c.charCodeAt(0); });

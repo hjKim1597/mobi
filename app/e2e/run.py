@@ -673,7 +673,7 @@ class Harness:
             result=int(re.findall(r"VOICE_EVENT kind="+target+r".*?atMs=(\d+)",log)[-1])
             effects=re.findall(r"EFFECT_START atMs=(\d+)",log)
             require(effects and int(effects[-1])-detected<=300,"Local endpoint acknowledgement exceeded 300ms")
-            require(result-last<=6000,"Whole voice response exceeded six seconds")
+            require(result-last<=(8000 if mode=="turn" else 6000),"Whole voice response exceeded its voice-mode deadline")
             require(not re.search(r"RECORD_START.*?AUDIO_START.*?RECORD_END",log,re.S),"Recording overlaps app playback")
             rows.append({"speechEndToResultMs":result-last,"vadMs":detected-last,"endpointToEffectMs":int(effects[-1])-detected})
             self.until_state(lambda state: state["voicePhase"] == "IDLE", "voice session finished", 10)
@@ -694,18 +694,18 @@ class Harness:
 
     def voice_deadline(self):
         self.activate_live();self.baseline();self.gear("Park")
-        self.fixture_request("config",{"delay":8,"delayPath":"/v1/turns"})
+        self.fixture_request("config",{"delay":10,"delayPath":"/v1/turns"})
         self.inject_voice("오늘 일정 알려줘")
         self.adb("logcat","-c");self.tap("speak")
         self.until_state(lambda state:state["voicePhase"]=="LISTENING","deadline capture")
 
-        self.until_state(lambda state:state["state"]=="DEFERRED","six-second fallback",12)
+        self.until_state(lambda state:state["state"]=="DEFERRED","eight-second fallback",12)
         time.sleep(3)
         log=self.logs();self.save("late-response.log",log)
         require("VOICE_EVENT kind=turn-started" not in log,"Late response was played")
         match=re.findall(r"RECORD_RESULT voiced=true samples=\d+ endpointMs=\d+ lastVoiceMs=(\d+)",log)
         deferred=re.findall(r"VOICE_EVENT kind=deferred.*?atMs=(\d+)",log)
-        require(match and deferred and 5800<=int(deferred[-1])-int(match[-1])<=6200,"Deadline was not tied to last voiced frame")
+        require(match and deferred and 7800<=int(deferred[-1])-int(match[-1])<=8200,"Deadline was not tied to last voiced frame")
         self.fixture_request("config",{})
         return {"latePlayback":0,"fallbacks":len(deferred),"elapsedMs":int(deferred[-1])-int(match[-1])}
 
@@ -908,13 +908,17 @@ class Harness:
                 self.setup_fixture()
                 initial = self.state()
                 self.original_gear = {"PARK": "Park", "DRIVE": "Drive"}.get(initial["gear"])
-                names = ["trip", "dialog", "driving", "boot-buttons", "demo-notification", "demo", "boot", "microphone", "lifetime", "pairing", "voice-knock", "voice-confirm", "voice-turn", "voice-deadline", "voice-navigation", "voice-offline", "voice-privacy"] if scenario == "all" else [scenario]
+                names = ["trip", "dialog", "driving", "boot-buttons", "demo-notification", "demo", "boot", "microphone", "lifetime", "pairing", "voice-knock", "voice-confirm", "voice-turn", "voice-deadline", "voice-navigation", "voice-offline", "voice-privacy", "action-reply", "action-calendar-mail", "action-calendar-voice", "action-cancel-hold", "action-demo-offline"] if scenario == "all" else [scenario]
                 for name in names:
                     self.adb("shell", "cmd", "connectivity", "airplane-mode", "disable")
                     self.adb("shell", "svc", "wifi", "enable")
                     self.adb("logcat", "-c")
-                    method = {"boot-buttons": self.boot_buttons, "demo": self.demo_case, "demo-notification": self.demo_notification}.get(name) or getattr(self, name.replace("-", "_"))
-                    result = method()
+                    action_scenarios = None
+                    if name.startswith("action-"):
+                        from action_scenarios import SCENARIOS
+                        action_scenarios = SCENARIOS
+                    method = {"boot-buttons": self.boot_buttons, "demo": self.demo_case, "demo-notification": self.demo_notification}.get(name) or (action_scenarios or {}).get(name) or getattr(self, name.replace("-", "_"))
+                    result = method(self) if action_scenarios and name in action_scenarios else method()
                     self.results.append({"scenario": name, "result": "PASS", **result})
                     self.save(name + ".log", self.logs())
                     self.save("results.json", self.results)
@@ -938,7 +942,7 @@ class Harness:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("scenario", choices=["install", "trip", "dialog", "driving", "boot-buttons", "demo-notification", "demo", "boot", "microphone", "lifetime", "pairing", "instrumentation", "voice-knock", "voice-confirm", "voice-turn", "voice-deadline", "voice-navigation", "voice-offline", "voice-privacy", "all", "verify-artifacts"])
+    parser.add_argument("scenario", choices=["install", "trip", "dialog", "driving", "boot-buttons", "demo-notification", "demo", "boot", "microphone", "lifetime", "pairing", "instrumentation", "voice-knock", "voice-confirm", "voice-turn", "voice-deadline", "voice-navigation", "voice-offline", "voice-privacy", "action-reply", "action-calendar-mail", "action-calendar-voice", "action-cancel-hold", "action-demo-offline", "all", "verify-artifacts"])
     parser.add_argument("--real-guidance", action="store_true", help="Require actual installed navigation guidance in addition to debug usage12")
     parser.add_argument("--serial")
     parser.add_argument("--evidence-root", help="Override the default evidence directory")

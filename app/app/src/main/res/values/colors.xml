@@ -1,8 +1,23 @@
 <resources>
     <color name="pleos_surface">#FFFFFF</color>
     <color name="pleos_text">#000000</color>
-    <color name="pleos_secondary">#666666</color>
-    <color name="pleos_divider">#CBC6CC</color>
+    <color name="pleos_secondary">#494949</color>
+    <color name="pleos_divider">#A6A6A6</color>
     <color name="pleos_active">#1262F5</color>
-    <color name="pleos_ripple">#33858585</color>
+    <color name="pleos_primary_fill">#000000</color>
+    <color name="pleos_primary_pressed">#99000000</color>
+    <color name="pleos_primary_disabled">#66000000</color>
+    <color name="pleos_primary_text">#FFFFFF</color>
+    <color name="pleos_primary_text_pressed">#CCFFFFFF</color>
+    <color name="pleos_primary_text_disabled">#66FFFFFF</color>
+    <color name="pleos_secondary_fill">#FFFFFF</color>
+    <color name="pleos_secondary_pressed">#14000000</color>
+    <color name="pleos_secondary_disabled">#0A000000</color>
+    <color name="pleos_secondary_text">#333333</color>
+    <color name="pleos_secondary_text_pressed">#CC333333</color>
+    <color name="pleos_secondary_text_disabled">#66333333</color>
+    <!-- Unqualified selector stroke colors are identical in the shared/vehicle XML. -->
+    <color name="pleos_secondary_border">#000000</color>
+    <color name="pleos_secondary_border_pressed">#A6A6A6</color>
+    <color name="pleos_secondary_border_disabled">#BDBDBD</color>
 </resources>

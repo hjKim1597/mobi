@@ -14,10 +14,25 @@ export interface TokenPayload {
   scopes: string[];
 }
 
-export const GOOGLE_SCOPES = [
+export const GOOGLE_READ_SCOPES = [
   'https://www.googleapis.com/auth/calendar.events.readonly',
   'https://www.googleapis.com/auth/calendar.calendars.readonly',
 ] as const;
+export const GOOGLE_SCOPES = [
+  ...GOOGLE_READ_SCOPES,
+  'https://www.googleapis.com/auth/gmail.readonly',
+  'https://www.googleapis.com/auth/gmail.compose',
+  'https://www.googleapis.com/auth/calendar.events.owned',
+] as const;
+
+export function googleCapabilities(scopes: readonly string[]) {
+  const has = (scope: string) => scopes.includes(`https://www.googleapis.com/auth/${scope}`);
+  const calendarRead = GOOGLE_READ_SCOPES.every(scope => scopes.includes(scope));
+  const mailRead = has('gmail.readonly');
+  const mailReply = mailRead && has('gmail.compose');
+  const calendarInsert = calendarRead && has('calendar.events.owned');
+  return { calendarRead, mailRead, mailReply, calendarInsert, reconnectRequired: !(calendarRead && mailRead && mailReply && calendarInsert) };
+}
 
 export const MAX_PROVIDER_RESPONSE_BYTES = 1_048_576;
 
@@ -25,7 +40,7 @@ export class GooglePayloadTooLarge extends GoogleError {
   constructor() { super('upstream', 'Google provider response exceeds byte limit'); this.name = 'GooglePayloadTooLarge'; }
 }
 
-async function readJsonBounded(response: Response, signal: AbortSignal, maxBytes = MAX_PROVIDER_RESPONSE_BYTES): Promise<unknown> {
+export async function readJsonBounded(response: Response, signal: AbortSignal, maxBytes = MAX_PROVIDER_RESPONSE_BYTES): Promise<unknown> {
   ensureActive(signal);
   const declared = Number(response.headers.get('content-length'));
   if (Number.isFinite(declared) && declared > maxBytes) {
@@ -104,6 +119,7 @@ export function authorizationUrl(env: GoogleEnv, state: string): string {
     scope: GOOGLE_SCOPES.join(' '),
     access_type: 'offline',
     prompt: 'consent',
+    include_granted_scopes: 'true',
     state,
   }).toString();
   return url.toString();
@@ -135,7 +151,7 @@ function parseToken(value: unknown, previous?: TokenPayload): TokenPayload {
     throw new GoogleError('upstream');
   }
   const scopes = typeof rawScopes === 'string' ? rawScopes.split(/\s+/).filter(Boolean) : previous!.scopes;
-  if (GOOGLE_SCOPES.some(scope => !scopes.includes(scope))) throw new GoogleError('upstream');
+  if (GOOGLE_READ_SCOPES.some(scope => !scopes.includes(scope))) throw new GoogleError('upstream');
   return { accessToken, refreshToken, expiresAt, scopes };
 }
 

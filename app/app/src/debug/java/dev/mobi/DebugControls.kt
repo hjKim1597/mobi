@@ -81,7 +81,7 @@ class DebugControls : BroadcastReceiver() {
                             "bounds" -> handler.post {
                                 val name = intent.getStringExtra("view").orEmpty()
                                 val request = intent.getStringExtra("request").orEmpty()
-                                if (name in setOf("accept", "decline", "demo", "live", "next", "connect", "speak")) {
+                                if (name in setOf("accept", "decline", "demo", "live", "next", "connect", "speak", "action_reply", "action_calendar", "action_approve", "action_cancel", "action_decline", "action_demo_mail", "action_demo_voice", "action_demo_dictate")) {
                                     val activity = visibleActivity?.get()
                                     val id = context.resources.getIdentifier(name, "id", context.packageName)
                                     val view = activity?.findViewById<android.view.View>(id)
@@ -118,6 +118,8 @@ class DebugControls : BroadcastReceiver() {
                             "measure-confirm" -> service.measureVoice(dev.mobi.voice.CaptureMode.CONFIRM, requireNotNull(intent.getStringExtra("id")))
                             "measure-turn" -> service.measureVoice(dev.mobi.voice.CaptureMode.QUESTION, requireNotNull(intent.getStringExtra("id")))
                             "measure-briefing" -> service.measureBriefing(requireNotNull(intent.getStringExtra("id")))
+                            "action-scan" -> service.debugActionScan()
+                            "action-voice" -> service.speak()
                             "pair" -> service.connect()
                             "test-knock" -> service.debugKnock()
                             "endpoint" -> {
@@ -188,7 +190,7 @@ internal fun safeDebugCommand(command: String?): String = command?.takeIf {
         "capture-notification-action", "send-captured-action", "notification-actions", "bounds", "input-wav",
         "input-reset", "failure-baseline", "failure-candidate", "package-current", "package-candidate",
         "measure-confirm", "measure-turn", "measure-briefing", "pair", "test-knock", "endpoint",
-        "remaining-live", "remaining", "nav-start", "nav-stop", "state")
+        "remaining-live", "remaining", "nav-start", "nav-stop", "state", "action-scan", "action-voice")
 } ?: "unknown"
 
 internal fun safeDebugRequest(request: String): String = request.takeIf { it.matches(Regex("[0-9]{1,20}")) } ?: "invalid"
@@ -198,6 +200,10 @@ class InjectedWavInput(private val file: java.io.File) : dev.mobi.voice.VoiceInp
     private val worker = java.util.concurrent.Executors.newSingleThreadExecutor()
     @Volatile private var active: dev.mobi.net.CancelHandle? = null
     override fun start(mode: dev.mobi.voice.CaptureMode, allowed: () -> Boolean, voiceStarted: () -> Unit, result: (Result<dev.mobi.voice.AudioClip>) -> Unit): dev.mobi.net.CancelHandle {
+        return start(mode, allowed, voiceStarted, result, ready = {})
+    }
+    override fun start(mode: dev.mobi.voice.CaptureMode, allowed: () -> Boolean, voiceStarted: () -> Unit,
+        result: (Result<dev.mobi.voice.AudioClip>) -> Unit, ready: () -> Unit): dev.mobi.net.CancelHandle {
         active?.cancel()
         val cancelled = java.util.concurrent.atomic.AtomicBoolean(false)
         val running = java.util.concurrent.atomic.AtomicReference<Thread?>()
@@ -218,6 +224,7 @@ class InjectedWavInput(private val file: java.io.File) : dev.mobi.voice.VoiceInp
                 val vad = dev.mobi.voice.EnergyVad(mode)
                 val start = SystemClock.elapsedRealtime()
                 Log.i(MobiService.TAG, "RECORD_START source=debug-wav atMs=$start")
+                ready()
                 var notified = false
                 while (!cancelled.get() && allowed()) {
                     frame = ShortArray(320) { i -> samples.getOrElse(vad.samples + i) { 0 } }
@@ -228,7 +235,7 @@ class InjectedWavInput(private val file: java.io.File) : dev.mobi.voice.VoiceInp
                     if (end || !vad.voiced && mode == dev.mobi.voice.CaptureMode.CONFIRM && vad.samples >= 96000) break
                 }
                 check(!cancelled.get() && allowed())
-                used = ShortArray(vad.samples) { samples.getOrElse(it) { 0 } }
+                used = if (mode == dev.mobi.voice.CaptureMode.HOLD) ShortArray(1) else ShortArray(vad.samples) { samples.getOrElse(it) { 0 } }
                 clip = dev.mobi.voice.AudioClip(dev.mobi.voice.AudioClip.wav(used), start + vad.lastVoicedSample / 16, vad.voiced)
                 Log.i(MobiService.TAG, "RECORD_RESULT voiced=${vad.voiced} samples=${vad.samples} endpointMs=${SystemClock.elapsedRealtime()} lastVoiceMs=${clip.lastVoicedAtMillis} source=debug-wav")
             } catch (e: Exception) { error = e }

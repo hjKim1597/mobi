@@ -1,0 +1,131 @@
+--------- beginning of main
+11-07 22:01:08.097   590   635 D NuPlayerDriver: NuPlayerDriver(0xb4000071cd809f50) created, clientPid(3569)
+11-07 22:01:08.161   590   635 D NuPlayerDriver: NuPlayerDriver(0xb4000071cd80b7d0) created, clientPid(3569)
+11-07 22:01:08.213   590  2914 D NuPlayerDriver: NuPlayerDriver(0xb4000071cd808f90) created, clientPid(3569)
+11-07 22:01:08.245   590   635 D NuPlayerDriver: NuPlayerDriver(0xb4000071cd809150) created, clientPid(3569)
+11-07 22:01:08.267   590   635 D NuPlayerDriver: NuPlayerDriver(0xb4000071cd80c090) created, clientPid(3569)
+11-07 22:01:08.286   590   635 D NuPlayerDriver: NuPlayerDriver(0xb4000071cd808a50) created, clientPid(3569)
+11-07 22:01:08.299   590  2914 D NuPlayerDriver: NuPlayerDriver(0xb4000071cd80c5d0) created, clientPid(3569)
+11-07 22:01:08.313   590  2914 D NuPlayerDriver: NuPlayerDriver(0xb4000071cd8094d0) created, clientPid(3569)
+11-07 22:01:08.758   590   635 D NuPlayerDriver: NuPlayerDriver(0xb4000071cd807710) created, clientPid(2708)
+11-07 22:01:08.826  2708  2708 D MediaPlayerNative: getMetadata
+11-07 22:01:08.935  2708  3085 W MediaPlayerNative: info/warning (3, 0)
+--------- beginning of crash
+11-07 22:01:09.174  4135  4234 E AndroidRuntime: FATAL EXCEPTION: Firebase Blocking Thread #1
+11-07 22:01:09.174  4135  4234 E AndroidRuntime: Process: ai.pleos.gleoai.model.provider, PID: 4135
+11-07 22:01:09.174  4135  4234 E AndroidRuntime: java.lang.AbstractMethodError: abstract method "A.f A.f.a0(int)"
+11-07 22:01:09.174  4135  4234 E AndroidRuntime: 	at e0.e.h(Unknown Source:89)
+11-07 22:01:09.174  4135  4234 E AndroidRuntime: 	at e0.e.b(Unknown Source:91)
+11-07 22:01:09.174  4135  4234 E AndroidRuntime: 	at com.google.firebase.installations.e.e(Unknown Source:30)
+11-07 22:01:09.174  4135  4234 E AndroidRuntime: 	at com.google.firebase.installations.e.b(Unknown Source:65)
+11-07 22:01:09.174  4135  4234 E AndroidRuntime: 	at c0.a.run(Unknown Source:14)
+11-07 22:01:09.174  4135  4234 E AndroidRuntime: 	at S.c.run(Unknown Source:8)
+11-07 22:01:09.174  4135  4234 E AndroidRuntime: 	at S.c.a(Unknown Source:84)
+11-07 22:01:09.174  4135  4234 E AndroidRuntime: 	at S.c.run(Unknown Source:12)
+11-07 22:01:09.174  4135  4234 E AndroidRuntime: 	at java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1145)
+11-07 22:01:09.174  4135  4234 E AndroidRuntime: 	at java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:644)
+11-07 22:01:09.174  4135  4234 E AndroidRuntime: 	at com.google.firebase.concurrent.b.a(Unknown Source:12)
+11-07 22:01:09.174  4135  4234 E AndroidRuntime: 	at com.google.firebase.concurrent.a.run(Unknown Source:14)
+11-07 22:01:09.174  4135  4234 E AndroidRuntime: 	at java.lang.Thread.run(Thread.java:1012)
+11-07 22:01:09.476  4135  4394 E AndroidRuntime: FATAL EXCEPTION: Firebase Blocking Thread #2
+11-07 22:01:09.476  4135  4394 E AndroidRuntime: Process: ai.pleos.gleoai.model.provider, PID: 4135
+11-07 22:01:09.476  4135  4394 E AndroidRuntime: java.lang.AbstractMethodError: abstract method "A.f A.f.a0(int)"
+11-07 22:01:09.476  4135  4394 E AndroidRuntime: 	at e0.e.h(Unknown Source:89)
+11-07 22:01:09.476  4135  4394 E AndroidRuntime: 	at e0.e.b(Unknown Source:91)
+11-07 22:01:09.476  4135  4394 E AndroidRuntime: 	at com.google.firebase.installations.e.e(Unknown Source:30)
+11-07 22:01:09.476  4135  4394 E AndroidRuntime: 	at com.google.firebase.installations.e.b(Unknown Source:65)
+11-07 22:01:09.476  4135  4394 E AndroidRuntime: 	at c0.a.run(Unknown Source:14)
+11-07 22:01:09.476  4135  4394 E AndroidRuntime: 	at S.c.run(Unknown Source:8)
+11-07 22:01:09.476  4135  4394 E AndroidRuntime: 	at S.c.a(Unknown Source:84)
+11-07 22:01:09.476  4135  4394 E AndroidRuntime: 	at S.c.run(Unknown Source:12)
+11-07 22:01:09.476  4135  4394 E AndroidRuntime: 	at java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1145)
+11-07 22:01:09.476  4135  4394 E AndroidRuntime: 	at java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:644)
+11-07 22:01:09.476  4135  4394 E AndroidRuntime: 	at com.google.firebase.concurrent.b.a(Unknown Source:12)
+11-07 22:01:09.476  4135  4394 E AndroidRuntime: 	at com.google.firebase.concurrent.a.run(Unknown Source:14)
+11-07 22:01:09.476  4135  4394 E AndroidRuntime: 	at java.lang.Thread.run(Thread.java:1012)
+11-07 22:01:14.140   590  1014 D NuPlayerDriver: stop(0xb4000071cd808f90)
+11-07 22:01:14.141   590  1014 D NuPlayerDriver: reset(0xb4000071cd808f90) at state 8
+11-07 22:01:14.143   590  3922 D NuPlayerDriver: notifyResetComplete(0xb4000071cd808f90)
+11-07 22:01:14.143   590  1014 D NuPlayerDriver: stop(0xb4000071cd808a50)
+11-07 22:01:14.143   590  1014 D NuPlayerDriver: reset(0xb4000071cd808a50) at state 8
+11-07 22:01:14.144   590  3944 D NuPlayerDriver: notifyResetComplete(0xb4000071cd808a50)
+11-07 22:01:14.144   590  1014 D NuPlayerDriver: stop(0xb4000071cd809f50)
+11-07 22:01:14.144   590  1014 D NuPlayerDriver: reset(0xb4000071cd809f50) at state 8
+11-07 22:01:14.144   590  3869 D NuPlayerDriver: notifyResetComplete(0xb4000071cd809f50)
+11-07 22:01:14.145   590  1014 D NuPlayerDriver: stop(0xb4000071cd80c090)
+11-07 22:01:14.145   590  1014 D NuPlayerDriver: reset(0xb4000071cd80c090) at state 8
+11-07 22:01:14.146   590  3940 D NuPlayerDriver: notifyResetComplete(0xb4000071cd80c090)
+11-07 22:01:14.147   590  1014 D NuPlayerDriver: stop(0xb4000071cd80b7d0)
+11-07 22:01:14.148   590  1014 D NuPlayerDriver: reset(0xb4000071cd80b7d0) at state 8
+11-07 22:01:14.149   590  3893 D NuPlayerDriver: notifyResetComplete(0xb4000071cd80b7d0)
+11-07 22:01:14.149   590  1014 D NuPlayerDriver: stop(0xb4000071cd8094d0)
+11-07 22:01:14.149   590  1014 D NuPlayerDriver: reset(0xb4000071cd8094d0) at state 8
+11-07 22:01:14.149   590  3953 D NuPlayerDriver: notifyResetComplete(0xb4000071cd8094d0)
+11-07 22:01:14.150   590  1014 D NuPlayerDriver: stop(0xb4000071cd809150)
+11-07 22:01:14.150   590  1014 D NuPlayerDriver: reset(0xb4000071cd809150) at state 8
+11-07 22:01:14.150   590  3936 D NuPlayerDriver: notifyResetComplete(0xb4000071cd809150)
+11-07 22:01:14.152   590   635 D NuPlayerDriver: stop(0xb4000071cd80c5d0)
+11-07 22:01:14.152   590   590 D NuPlayerDriver: reset(0xb4000071cd80c5d0) at state 8
+11-07 22:01:14.155   590  3949 D NuPlayerDriver: notifyResetComplete(0xb4000071cd80c5d0)
+11-07 22:01:14.172   590   590 D NuPlayerDriver: NuPlayerDriver(0xb4000071cd80b610) created, clientPid(3569)
+11-07 22:01:14.245   590   590 D NuPlayerDriver: NuPlayerDriver(0xb4000071cd809150) created, clientPid(3569)
+11-07 22:01:14.255   590   590 D NuPlayerDriver: NuPlayerDriver(0xb4000071cd80f890) created, clientPid(3569)
+11-07 22:01:14.267   590  1014 D NuPlayerDriver: NuPlayerDriver(0xb4000071cd810a10) created, clientPid(3569)
+11-07 22:01:14.321   590   590 D NuPlayerDriver: NuPlayerDriver(0xb4000071cd810690) created, clientPid(3569)
+11-07 22:01:14.348   590  1014 D NuPlayerDriver: NuPlayerDriver(0xb4000071cd814c90) created, clientPid(3569)
+11-07 22:01:14.378   590  1014 D NuPlayerDriver: NuPlayerDriver(0xb4000071cd816350) created, clientPid(3569)
+11-07 22:01:14.408   590  1014 D NuPlayerDriver: NuPlayerDriver(0xb4000071cd817bd0) created, clientPid(3569)
+11-07 22:01:14.903   590  1014 D NuPlayerDriver: reset(0xb4000071cd807710) at state 6
+11-07 22:01:14.921   590  4223 D NuPlayerDriver: notifyResetComplete(0xb4000071cd807710)
+11-07 22:01:14.921   590  1014 D NuPlayerDriver: reset(0xb4000071cd807710) at state 0
+11-07 22:01:14.932   590  1014 D NuPlayerDriver: NuPlayerDriver(0xb4000071cd8086d0) created, clientPid(2708)
+11-07 22:01:15.039   590  1014 D NuPlayerDriver: reset(0xb4000071cd8086d0) at state 4
+11-07 22:01:15.039   590  5946 D NuPlayerDriver: notifyResetComplete(0xb4000071cd8086d0)
+11-07 22:01:15.040   590  1014 D NuPlayerDriver: reset(0xb4000071cd8086d0) at state 0
+11-07 22:01:17.097  6090  6150 E AndroidRuntime: FATAL EXCEPTION: Firebase Blocking Thread #0
+11-07 22:01:17.097  6090  6150 E AndroidRuntime: Process: ai.pleos.gleoai.model.provider, PID: 6090
+11-07 22:01:17.097  6090  6150 E AndroidRuntime: java.lang.AbstractMethodError: abstract method "A.f A.f.a0(int)"
+11-07 22:01:17.097  6090  6150 E AndroidRuntime: 	at e0.e.h(Unknown Source:89)
+11-07 22:01:17.097  6090  6150 E AndroidRuntime: 	at e0.e.b(Unknown Source:91)
+11-07 22:01:17.097  6090  6150 E AndroidRuntime: 	at com.google.firebase.installations.e.e(Unknown Source:30)
+11-07 22:01:17.097  6090  6150 E AndroidRuntime: 	at com.google.firebase.installations.e.b(Unknown Source:65)
+11-07 22:01:17.097  6090  6150 E AndroidRuntime: 	at c0.a.run(Unknown Source:14)
+11-07 22:01:17.097  6090  6150 E AndroidRuntime: 	at S.c.run(Unknown Source:8)
+11-07 22:01:17.097  6090  6150 E AndroidRuntime: 	at S.c.a(Unknown Source:84)
+11-07 22:01:17.097  6090  6150 E AndroidRuntime: 	at S.c.run(Unknown Source:12)
+11-07 22:01:17.097  6090  6150 E AndroidRuntime: 	at java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1145)
+11-07 22:01:17.097  6090  6150 E AndroidRuntime: 	at java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:644)
+11-07 22:01:17.097  6090  6150 E AndroidRuntime: 	at com.google.firebase.concurrent.b.a(Unknown Source:12)
+11-07 22:01:17.097  6090  6150 E AndroidRuntime: 	at com.google.firebase.concurrent.a.run(Unknown Source:14)
+11-07 22:01:17.097  6090  6150 E AndroidRuntime: 	at java.lang.Thread.run(Thread.java:1012)
+11-07 22:01:17.232  6090  6235 E AndroidRuntime: FATAL EXCEPTION: Firebase Blocking Thread #1
+11-07 22:01:17.232  6090  6235 E AndroidRuntime: Process: ai.pleos.gleoai.model.provider, PID: 6090
+11-07 22:01:17.232  6090  6235 E AndroidRuntime: java.lang.AbstractMethodError: abstract method "A.f A.f.a0(int)"
+11-07 22:01:17.232  6090  6235 E AndroidRuntime: 	at e0.e.h(Unknown Source:89)
+11-07 22:01:17.232  6090  6235 E AndroidRuntime: 	at e0.e.b(Unknown Source:91)
+11-07 22:01:17.232  6090  6235 E AndroidRuntime: 	at com.google.firebase.installations.e.e(Unknown Source:30)
+11-07 22:01:17.232  6090  6235 E AndroidRuntime: 	at com.google.firebase.installations.e.b(Unknown Source:65)
+11-07 22:01:17.232  6090  6235 E AndroidRuntime: 	at c0.a.run(Unknown Source:14)
+11-07 22:01:17.232  6090  6235 E AndroidRuntime: 	at S.c.a(Unknown Source:84)
+11-07 22:01:17.232  6090  6235 E AndroidRuntime: 	at S.c.run(Unknown Source:12)
+11-07 22:01:17.232  6090  6235 E AndroidRuntime: 	at java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1145)
+11-07 22:01:17.232  6090  6235 E AndroidRuntime: 	at java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:644)
+11-07 22:01:17.232  6090  6235 E AndroidRuntime: 	at com.google.firebase.concurrent.b.a(Unknown Source:12)
+11-07 22:01:17.232  6090  6235 E AndroidRuntime: 	at com.google.firebase.concurrent.a.run(Unknown Source:14)
+11-07 22:01:17.232  6090  6235 E AndroidRuntime: 	at java.lang.Thread.run(Thread.java:1012)
+11-07 22:01:38.367   590  1014 I NuPlayerDriver:  NuPlayer
+11-07 22:01:38.367   590  1014 I NuPlayerDriver:   state(4), atEOS(0), looping(0), autoLoop(0), renderer(null)
+11-07 22:01:38.367   590  1014 I NuPlayerDriver:  NuPlayer
+11-07 22:01:38.367   590  1014 I NuPlayerDriver:   state(4), atEOS(0), looping(0), autoLoop(0), renderer(null)
+11-07 22:01:38.367   590  1014 I NuPlayerDriver:  NuPlayer
+11-07 22:01:38.367   590  1014 I NuPlayerDriver:   state(4), atEOS(0), looping(0), autoLoop(0), renderer(null)
+11-07 22:01:38.367   590  1014 I NuPlayerDriver:  NuPlayer
+11-07 22:01:38.367   590  1014 I NuPlayerDriver:   state(4), atEOS(0), looping(0), autoLoop(0), renderer(null)
+11-07 22:01:38.367   590  1014 I NuPlayerDriver:  NuPlayer
+11-07 22:01:38.367   590  1014 I NuPlayerDriver:   state(4), atEOS(0), looping(0), autoLoop(0), renderer(null)
+11-07 22:01:38.367   590  1014 I NuPlayerDriver:  NuPlayer
+11-07 22:01:38.367   590  1014 I NuPlayerDriver:   state(4), atEOS(0), looping(0), autoLoop(0), renderer(null)
+11-07 22:01:38.367   590  1014 I NuPlayerDriver:  NuPlayer
+11-07 22:01:38.367   590  1014 I NuPlayerDriver:   state(4), atEOS(0), looping(0), autoLoop(0), renderer(null)
+11-07 22:01:38.367   590  1014 I NuPlayerDriver:  NuPlayer
+11-07 22:01:38.367   590  1014 I NuPlayerDriver:   state(4), atEOS(0), looping(0), autoLoop(0), renderer(null)

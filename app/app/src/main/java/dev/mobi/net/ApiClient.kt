@@ -21,7 +21,11 @@ class ApiClient(val baseUrl: String, allowLoopback: Boolean = false, private val
         require(origin.rawUserInfo == null && origin.rawQuery == null && origin.rawFragment == null && origin.path.orEmpty() in setOf("", "/"))
         require(origin.scheme == "https" || allowLoopback && origin.scheme == "http" && origin.host in setOf("127.0.0.1", "localhost"))
     }
-    fun deadline() = RequestDeadline(clock, clock.elapsedRealtimeMillis() + 6000)
+    fun deadline() = deadline(6000)
+    fun deadline(durationMillis: Long) = RequestDeadline(
+        clock,
+        clock.elapsedRealtimeMillis() + durationMillis.also { require(it in 1..60_000) },
+    )
     fun register(d: RequestDeadline, cb: (Result<DeviceCredentials>) -> Unit) = request("POST", "/v1/devices", JSONObject(), null, d, ApiContract::credentials, cb)
     fun createPairing(c: DeviceCredentials, d: RequestDeadline, cb: (Result<PairingCreated>) -> Unit) = request("POST", "/v1/pairing", JSONObject(), c, d, { j ->
         ApiContract.pairing(j).also { p -> val u = URI(p.pairingUrl); require(u.scheme == origin.scheme && u.host == origin.host && u.port == origin.port && u.rawUserInfo == null && u.rawQuery == null && u.rawFragment == null && u.path == "/pair/${p.code}") }
@@ -36,6 +40,37 @@ class ApiClient(val baseUrl: String, allowLoopback: Boolean = false, private val
     }, cb)
     fun confirm(audio: WavAudio, c: DeviceCredentials, d: RequestDeadline, cb: (Result<ConfirmResponse>) -> Unit) = request("POST", "/v1/confirm", JSONObject().put("audio", ApiContract.audioJson(audio)), c, d, ApiContract::confirm, cb)
     fun turn(tripId: String, audio: WavAudio, c: DeviceCredentials, d: RequestDeadline, cb: (Result<TurnResponse>) -> Unit) = request("POST", "/v1/turns", JSONObject().put("tripId", tripId).put("audio", ApiContract.audioJson(audio)), c, d, ApiContract::turn, cb)
+
+    fun capabilities(c: DeviceCredentials, d: RequestDeadline, cb: (Result<Capabilities>) -> Unit) = request("GET", "/v1/capabilities", null, c, d, ActionApiContract::capabilities, cb)
+    fun scanMail(tripId: String, c: DeviceCredentials, d: RequestDeadline, cb: (Result<MailScanResponse>) -> Unit, quiet: Boolean = false): CancelHandle {
+        require(tripId.isNotBlank() && tripId.length <= 128)
+        val body = ActionApiContract.mailScanRequestJson(tripId, quiet)
+        return request("POST", "/v1/mail/scan", body, c, d, ActionApiContract::mailScan, cb)
+    }
+    fun proposeAction(value: ActionProposalRequest, c: DeviceCredentials, d: RequestDeadline, cb: (Result<ActionProposal>) -> Unit) =
+        request("POST", "/v1/actions/proposals", ActionApiContract.proposalJson(value), c, d, ActionApiContract::proposal, cb)
+    fun actionReadback(actionId: String, c: DeviceCredentials, d: RequestDeadline, cb: (Result<ActionProposal>) -> Unit): CancelHandle {
+        requireActionId(actionId)
+        return request("POST", "/v1/actions/$actionId/readback", JSONObject(), c, d, ActionApiContract::proposal, cb)
+    }
+    fun clarifyAction(actionId: String, version: Int, audio: WavAudio, c: DeviceCredentials, d: RequestDeadline, cb: (Result<ActionProposal>) -> Unit): CancelHandle {
+        requireActionId(actionId); require(version > 0)
+        return request("POST", "/v1/actions/$actionId/clarify", JSONObject().put("version", version).put("audio", ApiContract.audioJson(audio)), c, d, ActionApiContract::proposal, cb)
+    }
+    fun approveAction(actionId: String, value: ActionApprovalRequest, c: DeviceCredentials, d: RequestDeadline, cb: (Result<ActionApproval>) -> Unit): CancelHandle {
+        requireActionId(actionId)
+        return request("POST", "/v1/actions/$actionId/approve", ActionApiContract.approvalJson(value), c, d, ActionApiContract::approval, cb)
+    }
+    fun cancelAction(actionId: String, c: DeviceCredentials, d: RequestDeadline, cb: (Result<ActionCancel>) -> Unit): CancelHandle {
+        requireActionId(actionId)
+        return request("POST", "/v1/actions/$actionId/cancel", JSONObject(), c, d, ActionApiContract::cancel, cb)
+    }
+    fun actionStatus(actionId: String, c: DeviceCredentials, d: RequestDeadline, cb: (Result<ActionStatus>) -> Unit): CancelHandle {
+        requireActionId(actionId)
+        return request("GET", "/v1/actions/$actionId", null, c, d, ActionApiContract::status, cb)
+    }
+
+    private fun requireActionId(value: String) { require(runCatching { java.util.UUID.fromString(value) }.isSuccess && value.length == 36) }
 
     private fun <T> request(method: String, path: String, body: JSONObject?, auth: DeviceCredentials?, deadline: RequestDeadline, decode: (JSONObject) -> T, cb: (Result<T>) -> Unit): CancelHandle {
         val done = AtomicBoolean(false); val connection = AtomicReference<HttpURLConnection?>()

@@ -1,0 +1,22 @@
+<resources>
+    <!-- Same body/caption and spacing roles as the existing native screen. -->
+    <dimen name="quiet_setting_min_height">76dp</dimen>
+    <dimen name="quiet_setting_label_size">32sp</dimen>
+    <dimen name="quiet_setting_description_size">24sp</dimen>
+    <dimen name="quiet_setting_padding">16dp</dimen>
+    <dimen name="quiet_setting_description_gap">8dp</dimen>
+    <dimen name="quiet_setting_switch_gap">24dp</dimen>
+    <dimen name="quiet_setting_switch_width">64dp</dimen>
+    <dimen name="quiet_setting_switch_height">48dp</dimen>
+    <dimen name="quiet_setting_margin_top">32dp</dimen>
+    <style name="QuietMailSwitchTheme" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/pleos_active</item>
+        <item name="colorOnPrimary">@android:color/white</item>
+        <item name="colorSurface">@color/pleos_surface</item>
+        <item name="colorOnSurface">@color/pleos_text</item>
+        <item name="colorOutline">@color/pleos_secondary</item>
+        <item name="colorSurfaceVariant">@color/pleos_surface</item>
+    </style>
+    <string name="quiet_mail_on">켜짐</string>
+    <string name="quiet_mail_off">꺼짐</string>
+</resources>

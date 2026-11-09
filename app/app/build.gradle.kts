@@ -82,6 +82,7 @@ tasks.register("exportSubmissionApk") {
     }
 }
 dependencies {
+    implementation("com.google.android.material:material:1.10.0")
     implementation("ai.pleos.playground:NaviHelper:3.0.5")
     implementation("com.google.zxing:core:3.5.4")
     testImplementation("junit:junit:4.13.2")

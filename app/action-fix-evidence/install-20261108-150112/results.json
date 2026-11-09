@@ -1,0 +1,8 @@
+[
+  {
+    "scenario": "install",
+    "result": "PASS",
+    "installed": true,
+    "user": 10
+  }
+]
