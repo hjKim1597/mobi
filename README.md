@@ -49,4 +49,4 @@ python3 e2e/run.py verify-artifacts
 | 앱 지원 범위 | min/target SDK 34, 패키지 `dev.mobi` |
 | 서버 | Node.js 22, Cloudflare Workers |
 
-앱과 서버의 모든 단위 테스트가 통과했습니다. SHA-256 `530a50cd8ef5…`인 APK의 깨끗한 설치 후 release 데모(가상 메일 회신·일정 추가 포함)가 **2026-11-09**에 통과했습니다. lint·빌드·APK 구조/서명 검증도 통과했으며, [데모 검증 절차](app/e2e/release-demo.md)를 제공합니다. 실제 차량·마이크·클라우드 성능은 별도 검증 대상입니다.
+앱과 서버의 모든 단위 테스트가 통과했습니다. SHA-256 `6704f53d14d1…`인 APK의 깨끗한 설치 후 release 데모(가상 메일 회신·일정 추가 포함)와 Google 계정 연결이 **2026-11-11**에 통과했습니다. lint·빌드·APK 구조/서명 검증도 통과했으며, [데모 검증 절차](app/e2e/release-demo.md)를 제공합니다. 실제 차량·마이크·클라우드 성능은 별도 검증 대상입니다.

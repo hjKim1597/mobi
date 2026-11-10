@@ -280,6 +280,7 @@ class MobiScreen(
         guidance.text = context.getString(when {
             !interactive -> R.string.driving_guidance
             showQr -> R.string.pairing_guidance
+            viewState.demo -> R.string.demo_home_guidance
             else -> R.string.home_guidance
         })
         guidance.visibility = if (cards.visibility == VISIBLE) GONE else VISIBLE

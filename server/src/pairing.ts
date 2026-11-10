@@ -11,10 +11,12 @@ const baseHeaders = {
   'Referrer-Policy': 'no-referrer',
   'X-Content-Type-Options': 'nosniff',
 };
-const htmlSecurityHeaders = {
-  ...baseHeaders,
-  'Content-Security-Policy': "default-src 'none'; base-uri 'none'; frame-ancestors 'none'",
-};
+function htmlSecurityHeaders(nonce: string): Record<string, string> {
+  return {
+    ...baseHeaders,
+    'Content-Security-Policy': `default-src 'none'; style-src 'nonce-${nonce}'; base-uri 'none'; frame-ancestors 'none'`,
+  };
+}
 
 function randomToken(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(32));
@@ -52,14 +54,60 @@ function htmlEscape(value: string): string {
   return value.replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]!);
 }
 
-function html(status: number, title: string, message: string, extra = '', cookie?: string): Response {
-  const headers = new Headers({ ...htmlSecurityHeaders, 'Content-Type': 'text/html; charset=utf-8' });
+const pageCss = `:root{color-scheme:light dark;--bg:#f5f5f7;--fg:#1d1d1f;--fg2:#6e6e73;--fill:#e8e8ed;--ok:#34c759;--warn:#ff9500;--blue:#0071e3;--ease:cubic-bezier(.23,1,.32,1)}
+@media (prefers-color-scheme:dark){:root{--bg:#000;--fg:#f5f5f7;--fg2:#a1a1a6;--fill:#1d1d1f;--ok:#30d158;--warn:#ff9f0a;--blue:#2997ff}}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;min-height:100vh;min-height:100svh;display:flex;align-items:center;justify-content:center;background:var(--bg);color:var(--fg);font-family:-apple-system,BlinkMacSystemFont,"SF Pro KR","SF Pro Text","Apple SD Gothic Neo",Pretendard,"Noto Sans KR","Malgun Gothic",system-ui,sans-serif;font-size:17px;line-height:1.59;-webkit-font-smoothing:antialiased;word-break:keep-all;overflow-wrap:anywhere}
+main{width:100%;max-width:440px;padding:56px 24px calc(56px + env(safe-area-inset-bottom));text-align:center}
+.brand{margin:0 0 40px;font-size:15px;font-weight:600;letter-spacing:.01em;color:var(--fg2)}
+.mark{width:72px;height:72px;margin:0 auto 28px;border-radius:50%;display:grid;place-items:center;color:#fff;background:var(--warn)}
+.tone-success .mark{background:var(--ok)}
+.tone-browser .mark{background:var(--blue)}
+.mark svg{width:36px;height:36px}
+h1{margin:0 0 12px;font-size:clamp(26px,7.6vw,32px);line-height:1.125;font-weight:600;letter-spacing:.002em;text-wrap:balance}
+.msg{margin:0;color:var(--fg2);text-wrap:balance}
+.url{margin:28px 0 0;padding:14px 16px;border-radius:14px;background:var(--fill);color:var(--fg);font:15px/1.45 ui-monospace,"SF Mono",Menlo,monospace;text-align:left;word-break:break-all;-webkit-user-select:all;user-select:all}
+@media (prefers-reduced-motion:no-preference){
+.mark{animation:pop .45s var(--ease) both}
+h1,.msg,.url{animation:rise .45s var(--ease) both}
+h1{animation-delay:.06s}.msg{animation-delay:.12s}.url{animation-delay:.18s}
+.tone-success .check{stroke-dasharray:1;stroke-dashoffset:1;animation:draw .35s .2s var(--ease) forwards}
+}
+@keyframes pop{from{opacity:0;transform:scale(.9)}}
+@keyframes rise{from{opacity:0;transform:translateY(8px)}}
+@keyframes draw{to{stroke-dashoffset:0}}`;
+
+const icons = {
+  success: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.6"><path class="check" pathLength="1" d="M6 12.5l4 4 8-9"/></svg>',
+  retry: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.4"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>',
+  error: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.8"><path d="M12 7v6"/><path d="M12 17h.01"/></svg>',
+  browser: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>',
+} as const;
+type PageTone = keyof typeof icons;
+
+function html(status: number, title: string, message: string, tone: PageTone, extra = '', cookie?: string): Response {
+  const nonce = randomToken();
+  const headers = new Headers({
+    ...htmlSecurityHeaders(nonce),
+    'Content-Type': 'text/html; charset=utf-8',
+  });
   if (cookie) headers.set('Set-Cookie', cookie);
-  return new Response(`<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${htmlEscape(title)}</title><main><h1>${htmlEscape(title)}</h1><p>${htmlEscape(message)}</p>${extra}</main></html>`, { status, headers });
+  return new Response(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="color-scheme" content="light dark"><title>${htmlEscape(title)} – 모비</title><style nonce="${htmlEscape(nonce)}">${pageCss}</style></head><body><main class="tone-${htmlEscape(tone)}"><p class="brand">모비</p><div class="mark" aria-hidden="true">${icons[tone]}</div><h1>${htmlEscape(title)}</h1><p class="msg">${htmlEscape(message)}</p>${extra}</main></body></html>`, { status, headers });
 }
 
 function safeErrorPage(status: number, cookie?: string): Response {
-  return html(status, '연결을 완료할 수 없습니다', '요청을 처리하지 못했습니다. 기기에서 새 연결 코드를 발급해 주세요.', '', cookie);
+  if (status === 410) return html(status, '연결 시간이 지났어요', '차량 화면에서 계정 연결을 다시 눌러 새 QR 코드로 연결해 주세요.', 'retry', '', cookie);
+  if (status === 404) return notFoundPage(cookie);
+  return html(status, '연결하지 못했어요', '잠시 후 차량 화면에서 계정 연결을 다시 눌러 주세요.', 'error', '', cookie);
+}
+
+function expiredPage(): Response {
+  return html(410, '연결 시간이 지났어요', '차량 화면에서 계정 연결을 다시 눌러 새 QR 코드로 연결해 주세요.', 'retry');
+}
+
+function notFoundPage(cookie?: string): Response {
+  return html(404, '연결 정보를 찾을 수 없어요', '차량 화면에서 계정 연결을 다시 눌러 새 QR 코드로 연결해 주세요.', 'retry', '', cookie);
 }
 
 function cookieValue(request: Request): { value: string | null; present: boolean; duplicate: boolean } {
@@ -126,20 +174,20 @@ async function pairingStatus(env: Env, code: string, deviceId: string): Promise<
 }
 
 async function pairingPage(request: Request, env: Env, code: string): Promise<Response> {
-  if (!codePattern.test(code)) return html(404, '연결 코드를 찾을 수 없습니다', '기기에서 새 연결 코드를 발급해 주세요.');
+  if (!codePattern.test(code)) return notFoundPage();
   const pair = pairObject(env, code);
   const row = await pair.read() as PairingRecord | null;
-  if (!row) return html(404, '연결 코드를 찾을 수 없습니다', '기기에서 새 연결 코드를 발급해 주세요.');
-  if (Date.now() >= row.expires_at || row.status !== 'pending') return html(410, '연결 코드가 만료되었습니다', '기기에서 새 연결 코드를 발급해 주세요.');
+  if (!row) return notFoundPage();
+  if (Date.now() >= row.expires_at || row.status !== 'pending') return expiredPage();
   const device = env.DEVICE_AGENTS.getByName(row.device_id);
   const connection = await device.getConnectionState();
-  if (connection.epoch !== row.expected_epoch) return html(410, '연결 코드가 만료되었습니다', '기기에서 새 연결 코드를 발급해 주세요.');
+  if (connection.epoch !== row.expected_epoch) return expiredPage();
   const ua = request.headers.get('user-agent') ?? '';
   const publicOrigin = origin(env);
   if (!publicOrigin) return safeErrorPage(500);
   const pairingUrl = `${publicOrigin}/pair/${code}`;
   if (embeddedBrowser(ua)) {
-    return html(200, '기본 브라우저에서 열어 주세요', `이 앱 안에서는 Google 로그인을 진행할 수 없습니다. Chrome 또는 Safari에서 아래 주소를 열어 주세요. 연결 코드는 ${code}입니다.`, `<p><code>${htmlEscape(pairingUrl)}</code></p>`);
+    return html(200, '기본 브라우저에서 열어 주세요', '이 앱 안에서는 Google 로그인을 할 수 없어요. 아래 주소를 Chrome이나 Safari에서 열어 주세요.', 'browser', `<p class="url">${htmlEscape(pairingUrl)}</p>`);
   }
   let state: string;
   let authorization: string;
@@ -150,11 +198,16 @@ async function pairingPage(request: Request, env: Env, code: string): Promise<Re
     authorization = authorizationUrl(env, state);
     const now = Date.now();
     if (now >= row.expires_at || !await pair.setBrowser(await hash(state), await hash(browserCookie), now)) {
-      return html(410, '연결 코드가 만료되었습니다', '기기에서 새 연결 코드를 발급해 주세요.');
+      return expiredPage();
     }
     const remainingSeconds = Math.max(0, Math.floor((row.expires_at - now) / 1000));
     const setCookie = `__Host-mobi-oauth=${browserCookie}; Max-Age=${remainingSeconds}; Path=/; Secure; HttpOnly; SameSite=Lax`;
-    return html(200, 'Google 계정 연결', '계속하려면 Google 계정에 로그인해 필요한 권한을 승인해 주세요. 기본 브라우저에서 Google 로그인 창을 열어 주세요.', `<p><a href="${htmlEscape(authorization)}" rel="noopener">Google 계정 연결</a></p><p>연결 코드: <code>${code}</code></p>`, setCookie);
+    const headers = new Headers({
+      ...htmlSecurityHeaders(randomToken()),
+      Location: authorization,
+    });
+    headers.set('Set-Cookie', setCookie);
+    return new Response(null, { status: 302, headers });
   } catch {
     return safeErrorPage(500);
   }
@@ -190,7 +243,7 @@ async function callback(request: Request, env: Env): Promise<Response> {
   if (!row) return safeErrorPage(410, clear);
   if (providerError !== null) {
     await pair.finish('failed');
-    return html(400, 'Google 연결이 취소되었습니다', '다시 연결하려면 기기에서 새 연결 코드를 발급해 주세요.', '', clear);
+    return html(400, 'Google 연결이 취소됐어요', '다시 연결하려면 차량 화면에서 계정 연결을 눌러 주세요.', 'retry', '', clear);
   }
   try {
     const device = env.DEVICE_AGENTS.getByName(row.device_id);
@@ -208,7 +261,7 @@ async function callback(request: Request, env: Env): Promise<Response> {
       return safeErrorPage(502, clear);
     }
     try { await pair.finish('paired'); } catch { /* owner polling reconciles the committed attempt id */ }
-    return html(200, 'Google 계정이 연결되었습니다', '이 창을 닫고 기기로 돌아가세요.', '', clear);
+    return html(200, 'Google 계정을 연결했어요', '이제 차량 화면으로 돌아가세요. 이 창은 닫아도 돼요.', 'success', '', clear);
   } catch {
     try { await pair.finish('failed'); } catch { /* the callback remains terminal even if its tombstone write fails */ }
     return safeErrorPage(502, clear);
@@ -229,7 +282,8 @@ export async function handlePairing(request: Request, env: Env, deviceId?: strin
       if (expiresAt === null || expiresAt <= Date.now()) {
         const status = expiresAt === null ? 404 : 410;
         return pathname.startsWith('/v1/') ? apiError(status, 'NOT_FOUND', 'Pairing code not found or expired.')
-          : safeErrorPage(status, pathname === '/oauth/google/callback' && cookieValue(request).present ? clearedCookie() : undefined);
+          : pathname.startsWith('/pair/') ? status === 410 ? expiredPage() : notFoundPage()
+            : safeErrorPage(status, pathname === '/oauth/google/callback' && cookieValue(request).present ? clearedCookie() : undefined);
       }
     } else if (code && pathname.startsWith('/v1/')) {
       return apiError(404, 'NOT_FOUND', 'Pairing code not found.');

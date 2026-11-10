@@ -527,13 +527,13 @@ class MobiService : Service() {
             { value -> auth.save(value); credentials = value; cache = TodayCache(this, serverBase, value.deviceId) },
             { c, deadline, cb -> api.createPairing(c, deadline) { result -> onState { cb(result) } } },
             { code, c, deadline, cb -> api.pollPairing(code, c, deadline) { result -> onState { cb(result) } } },
-            ::schedule, { view -> pairingView = view; if (view.status == "paired") refreshToday(); if (initialized) publish() })
+            ::schedule, { view -> pairingView = view; if (view.status == "paired") { needsConnection = false; refreshToday() }; if (initialized) publish() })
         navi = NaviSource(this) { seconds -> onState { if (!naviOverride) remainingSeconds = seconds } }
         navi.start()
         dayTask?.cancel()
         fun checkDay() {
             dayTask = schedule(60000) {
-                if (liveEnabled && !demo && online() && cache?.load() == null) {
+                if (liveEnabled && !demo && !needsConnection && online() && cache?.load() == null) {
                     today = null
                     refreshToday()
                 }

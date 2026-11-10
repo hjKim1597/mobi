@@ -116,6 +116,7 @@ async function advancePastHedgedStt(ai: { run: ReturnType<typeof vi.fn> }, delay
 
 async function check(response: Response): Promise<void> {
   expect(response.headers.get('Cache-Control')).toBe('no-store');
+  if (response.status >= 300 && response.status < 400) return;
   if (response.headers.get('Content-Type')?.startsWith('text/html')) return;
   const schemas = { ...responseSchemas, ...additionalResponseSchemas };
   const schema = schemas[String(response.status) as keyof typeof schemas];
@@ -451,11 +452,31 @@ async function issue(device: Device): Promise<PairCode> {
 }
 async function browser(code: string) {
   const response = await call(`/pair/${code}`, { headers: { 'User-Agent': 'Mozilla/5.0 Chrome/130.0 Safari/537.36' } });
-  expect(response.status).toBe(200);
+  expect(response.status).toBe(302);
+  const location = response.headers.get('Location');
+  expect(location).not.toBeNull();
+  const auth = new URL(location!);
+  expect(auth.hostname).toBe('accounts.google.com');
+  expect(response.headers.get('Set-Cookie')).toMatch(/^__Host-mobi-oauth=/);
+  expect(response.headers.get('Referrer-Policy')).toBe('no-referrer');
+  expect(response.headers.get('Cache-Control')).toBe('no-store');
+  expect(response.headers.get('X-Content-Type-Options')).toBe('nosniff');
+  expect(response.headers.get('Content-Security-Policy')).toMatch(/style-src 'nonce-[A-Za-z0-9_-]+'/);
   const html = await response.text();
-  const auth = new URL(html.match(/href="(https:\/\/accounts\.google\.com[^\"]+)"/)![1].replaceAll('&amp;', '&'));
+  expect(html).toBe('');
   const cookie = response.headers.get('Set-Cookie')!.split(';')[0];
   return { auth, cookie, response, html };
+}
+function expectNonceHtml(response: Response, html: string): string {
+  const csp = response.headers.get('Content-Security-Policy') ?? '';
+  const nonce = csp.match(/style-src 'nonce-([^']+)'/)?.[1];
+  expect(nonce).toBeTruthy();
+  expect(html).toContain(`<style nonce="${nonce}">`);
+  expect(html).not.toMatch(/<script\b/i);
+  expect(csp).toContain("default-src 'none'");
+  expect(csp).toContain("base-uri 'none'");
+  expect(csp).toContain("frame-ancestors 'none'");
+  return nonce!;
 }
 async function callback(auth: URL, cookie: string, query = 'code=authorization-marker') {
   return call(`/oauth/google/callback?${query}&state=${encodeURIComponent(auth.searchParams.get('state')!)}`, {
@@ -626,7 +647,8 @@ describe('A4 pairing and OAuth', () => {
     const device = await register();
     const code = await issue(device);
     const response = await worker.fetch(new Request(`https://attacker.invalid/pair/${code.code}`), env);
-    expect(await response.text()).toContain('https://mobi.invalid/oauth/google/callback'.replaceAll('/', '%2F').replace(':', '%3A'));
+    expect(response.status).toBe(302);
+    expect(new URL(response.headers.get('Location')!).searchParams.get('redirect_uri')).toBe('https://mobi.invalid/oauth/google/callback');
     for (const origin of ['http://mobi.invalid', 'https://mobi.invalid/path', 'https://u:p@mobi.invalid', 'https://mobi.invalid?x=1']) {
       expect((await call('/v1/pairing', { method: 'POST', body: {}, token: device.deviceToken, bindings: { PUBLIC_ORIGIN: origin } })).status).toBe(500);
     }
@@ -653,7 +675,9 @@ describe('A4 pairing and OAuth', () => {
     await browser(code.code);
     expect((await call(`/v1/pairing/${code.code}`, { token: device.deviceToken })).status).toBe(200);
     vi.setSystemTime(Date.parse(code.expiresAt));
-    expect((await call(`/pair/${code.code}`)).status).toBe(410);
+    const expiredPageResponse = await call(`/pair/${code.code}`);
+    expect(expiredPageResponse.status).toBe(410);
+    expect(await expiredPageResponse.text()).toContain('연결 시간이 지났어요');
     expect((await call(`/v1/pairing/${code.code}`, { token: device.deviceToken })).status).toBe(410);
   });
 
@@ -663,9 +687,82 @@ describe('A4 pairing and OAuth', () => {
     const html = await response.text();
     expect(response.headers.get('Content-Type')).toContain('text/html');
     expect(html).toContain('기본 브라우저');
+    expect(html).toContain('이 앱 안에서는 Google 로그인을 할 수 없어요. 아래 주소를 Chrome이나 Safari에서 열어 주세요.');
+    expect(html).toContain(`<p class="url">https://mobi.invalid/pair/${code.code}</p>`);
+    expect(html.replace(/<p class="url">[\s\S]*?<\/p>/, '')).not.toContain(code.code);
     expect(html).not.toContain('accounts.google.com');
     expect(response.headers.get('Content-Security-Policy')).toContain("frame-ancestors 'none'");
     expect(response.headers.get('Referrer-Policy')).toBe('no-referrer');
+    expect(response.status).toBe(200);
+    expectNonceHtml(response, html);
+  });
+
+  it('renders the exact safe status copy with a fresh nonce and no active content', async () => {
+    const nonces: string[] = [];
+    const device = await register();
+    const code = await issue(device);
+    const embedded = await call(`/pair/${code.code}`, { headers: { 'User-Agent': 'Android; wv' } });
+    const embeddedHtml = await embedded.text();
+    expect(embeddedHtml).toContain('<title>기본 브라우저에서 열어 주세요 – 모비</title>');
+    nonces.push(expectNonceHtml(embedded, embeddedHtml));
+
+    const session = await browser(code.code);
+    expect(session.html).toBe('');
+    tokenMock();
+    const success = await callback(session.auth, session.cookie);
+    const successHtml = await success.text();
+    expect(success.status).toBe(200);
+    expect(successHtml).toContain('<title>Google 계정을 연결했어요 – 모비</title>');
+    expect(successHtml).toContain('이제 차량 화면으로 돌아가세요. 이 창은 닫아도 돼요.');
+    nonces.push(expectNonceHtml(success, successHtml));
+
+    const cancelledCode = await issue(await register());
+    const cancelledSession = await browser(cancelledCode.code);
+    const cancelled = await callback(cancelledSession.auth, cancelledSession.cookie, 'error=access_denied');
+    const cancelledHtml = await cancelled.text();
+    expect(cancelled.status).toBe(400);
+    expect(cancelledHtml).toContain('<title>Google 연결이 취소됐어요 – 모비</title>');
+    expect(cancelledHtml).toContain('다시 연결하려면 차량 화면에서 계정 연결을 눌러 주세요.');
+    nonces.push(expectNonceHtml(cancelled, cancelledHtml));
+
+    const expiredCode = await issue(await register());
+    vi.setSystemTime(Date.parse(expiredCode.expiresAt));
+    const expired = await call(`/pair/${expiredCode.code}`);
+    const expiredHtml = await expired.text();
+    expect(expired.status).toBe(410);
+    expect(expiredHtml).toContain('<title>연결 시간이 지났어요 – 모비</title>');
+    expect(expiredHtml).toContain('차량 화면에서 계정 연결을 다시 눌러 새 QR 코드로 연결해 주세요.');
+    nonces.push(expectNonceHtml(expired, expiredHtml));
+    vi.setSystemTime(Date.now() - 300_000);
+
+    const notFound = await call(`/pair/${'z'.repeat(43)}`);
+    const notFoundHtml = await notFound.text();
+    expect(notFound.status).toBe(404);
+    expect(notFoundHtml).toContain('<title>연결 정보를 찾을 수 없어요 – 모비</title>');
+    expect(notFoundHtml).toContain('차량 화면에서 계정 연결을 다시 눌러 새 QR 코드로 연결해 주세요.');
+    nonces.push(expectNonceHtml(notFound, notFoundHtml));
+
+    const errorCode = await issue(await register());
+    const error = await call(`/pair/${errorCode.code}`, { bindings: { PUBLIC_ORIGIN: 'https://mobi.invalid/path' } });
+    const errorHtml = await error.text();
+    expect(error.status).toBe(500);
+    expect(errorHtml).toContain('<title>연결하지 못했어요 – 모비</title>');
+    expect(errorHtml).toContain('잠시 후 차량 화면에서 계정 연결을 다시 눌러 주세요.');
+    nonces.push(expectNonceHtml(error, errorHtml));
+    expect(new Set(nonces).size).toBe(nonces.length);
+  });
+
+  it('uses the not-found page for an unknown callback code and still clears its cookie', async () => {
+    const code = 'x'.repeat(43), nonce = 'y'.repeat(43);
+    const response = await call(`/oauth/google/callback?state=${code}.${nonce}&code=authorization-marker`, {
+      headers: { Cookie: '__Host-mobi-oauth=browser-cookie' },
+    });
+    const page = await response.text();
+    expect(response.status).toBe(404);
+    expect(page).toContain('<title>연결 정보를 찾을 수 없어요 – 모비</title>');
+    expect(page).toContain('차량 화면에서 계정 연결을 다시 눌러 새 QR 코드로 연결해 주세요.');
+    expect(response.headers.get('Set-Cookie')).toMatch(/^__Host-mobi-oauth=; Max-Age=0;/);
+    expectNonceHtml(response, page);
   });
 
   it('binds browser cookies/state and incrementally requests read and action scopes', async () => {
@@ -677,6 +774,9 @@ describe('A4 pairing and OAuth', () => {
     expect(session.auth.searchParams.get('prompt')).toBe('consent');
     expect(session.auth.searchParams.get('redirect_uri')).toBe('https://mobi.invalid/oauth/google/callback');
     expect(session.auth.searchParams.get('client_id')).toBe(env.GOOGLE_CLIENT_ID);
+    expect(session.response.status).toBe(302);
+    expect(session.html).toBe('');
+    expect(session.response.headers.get('Content-Security-Policy')).toContain("style-src 'nonce-");
     expect(session.response.headers.get('Set-Cookie')).toMatch(/Secure/);
     expect(session.response.headers.get('Set-Cookie')).toMatch(/HttpOnly/);
     expect(session.response.headers.get('Set-Cookie')).toMatch(/SameSite=Lax/);
@@ -723,7 +823,9 @@ describe('A4 pairing and OAuth', () => {
     expect((await callback(old.auth, old.cookie)).status).toBe(400);
     expect((await callback(current.auth, current.cookie, 'code=a&code=b')).status).toBe(400);
     vi.setSystemTime(Date.parse(code.expiresAt));
-    expect((await callback(current.auth, current.cookie)).status).toBe(410);
+    const expired = await callback(current.auth, current.cookie);
+    expect(expired.status).toBe(410);
+    expect(await expired.text()).toContain('연결 시간이 지났어요');
   });
 
   it('consumes valid denial and fails closed for missing refresh tokens or insufficient scopes', async () => {

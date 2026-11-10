@@ -21,7 +21,7 @@
 | `POST /v1/devices` | 공개 | `{}` | 201 등록 / 400 / 413 / 429(IP 제한) |
 | `POST /v1/pairing` | 기기 | `{}` | 200 `{code,pairingUrl,expiresAt}` |
 | `GET /v1/pairing/{code}` | 기기 | 없음 | 소유자만 200 `{status,expiresAt}`, 404/410 |
-| `GET /pair/{code}` | 공개 | 없음 | 200 HTML·기본 브라우저 안내, 404/410 HTML |
+| `GET /pair/{code}` | 공개 | 없음 | 일반 브라우저는 쿠키 바인딩 후 Google authorization URL로 302, 알려진 인앱 브라우저는 전체 URL 안내 HTML, 404/410 HTML |
 | `GET /oauth/{provider}/callback` | 공개 | 없음 | Google: 200/400/410/500/502 HTML. Slack: 501 JSON |
 | `DELETE /v1/connections/{provider}` | 기기 | 없음 | Google: 200 `{provider,connected,revocation}`. Slack: 501 |
 | `GET /v1/today` | 기기 | 없음 | Google 연결 시 200 `{date,timeZone,events,knock}`, 미연결/갱신 불능 403, provider 일시 오류 502 |
@@ -129,7 +129,7 @@ HTML 오류는 요청 정보나 provider 원문을 반영하지 않는 안내문
 
 등록한 기기로 `POST /v1/pairing`에 `{}`를 보내면 32바이트 무작위 base64url 코드(43자), HTTPS `pairingUrl`, UTC RFC3339 `expiresAt`을 받는다. 앱이 **pairingUrl 자체를 QR에 인코딩**한다. 서버는 QR 이미지나 외부 QR 서비스를 사용하지 않는다. URL에 deviceToken·계정 정보는 없다. 유효기간은 발급부터 정확히 5분이며 방문/조회로 연장되지 않는다.
 
-휴대폰 `/pair/{code}` 페이지는 Chrome/Safari 등 기본 브라우저 사용을 안내한다. 알려진 인앱 브라우저에서는 Google 로그인 링크를 제공하지 않고 기본 브라우저에서 열 주소를 보여준다. UA 감지는 안내를 위한 보조 수단이다. 실제 로그인은 Google의 secure-browser 정책을 충족하는 외부 브라우저에서 진행해야 한다.
+휴대폰 `/pair/{code}`는 만료·소유 epoch·상태를 확인하고, 일반 브라우저에는 새 state와 Secure·HttpOnly·SameSite=Lax 쿠키로 브라우저 바인딩을 저장한 뒤 Google authorization URL로 302 응답한다. 302와 HTML은 `Cache-Control: no-store`, `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff`, CSP를 사용한다. 알려진 인앱 브라우저에는 Google URL을 열지 않고 연결 안내와 전체 pairing URL을 보여준다. 코드 문구를 별도로 표시하지 않는다. UA 감지는 안내를 위한 보조 수단이다. 실제 로그인은 Google의 secure-browser 정책을 충족하는 외부 브라우저에서 진행해야 한다. HTML 상태 페이지는 요청마다 새 CSP style nonce를 사용하고 스크립트·외부 리소스를 포함하지 않는다.
 
 Google authorization은 `access_type=offline&prompt=consent`와 random state를 사용한다. state/cookie의 해시를 코드 DO에 저장하고 Secure·HttpOnly·SameSite=Lax cookie로 callback을 브라우저에 결합한다. callback은 state/cookie/만료를 검증한 뒤 원자적으로 코드를 소진하므로 중복 callback은 **410**, 토큰 교환은 한 번이다. 실패한 교환은 새 코드를 발급받아 재시도한다. 코드 해시·만료시각은 만료 후 최대 하루 더 보존한다.
 
