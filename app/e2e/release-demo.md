@@ -1,6 +1,6 @@
 # Release 데모 clean-install 검증
 
-**준비 완료·실행 대기.** 단일 AVD를 사용하는 음성 작업이 끝나고 coordinator가 사용 가능하다고 알린 뒤 실행한다. 이 절차 작성 중 에뮬레이터를 시작하거나 조작하지 않는다.
+제출 APK를 깨끗하게 설치한 뒤 release 데모를 확인하는 절차다. 2026-11-11 결과는 README에 적었다.
 
 ## 준비와 설치
 
@@ -49,4 +49,4 @@ Virtual Console session의 POST heartbeat를 별도 실행기로 초당 1회 유
 
 결과에 APK SHA-256, 인증서 subject/digest, 이미지 버전·API·AVD, 앱 version, clean 수준, 설치·연결·권한·FGS 상태와 각 화면 증거를 기록한다. 실제 serial은 공개용 문서에 싣지 않는다. 실패·누락은 그대로 남긴다.
 
-기록한 연결/기어 상태를 복원하고 heartbeat를 중단한다. 이번에 만든 tcp:8088 forward와 guest UI dump를 제거한다. host mic을 끈 상태로 유지하고, 이 검증 전용으로 시작한 emulator만 coordinator의 운영 방침에 맞춰 종료한다. 다른 작업자의 emulator를 종료하지 않는다.
+기록한 연결/기어 상태를 복원하고 heartbeat를 중단한다. 이번에 만든 tcp:8088 forward와 guest UI dump를 제거한다. host mic을 끈 상태로 유지하고, 이 검증 전용으로 시작한 emulator만 종료한다. 다른 작업자의 emulator를 종료하지 않는다.
