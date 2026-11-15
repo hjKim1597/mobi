@@ -493,7 +493,7 @@ describe('generated knock asset integrity', () => {
     }
     for (const n of [0, 1, 2, 100]) {
       const bundle = selectKnock(n, '2026-10-24', 'Asia/Seoul');
-      expect(bundle.eventCount).toBe(n); expect(bundle.offline.text).not.toMatch(/[?？]|들을까요/);
+      expect(bundle.eventCount).toBe(n); expect(bundle.offline.text).not.toMatch(/[?？]|들으시겠어요/);
       expect(selectKnock(n, '2026-10-24', 'Asia/Seoul')).toEqual(bundle);
     }
   });

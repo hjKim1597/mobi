@@ -266,7 +266,7 @@ def demo_offline(harness):
     harness.tap("action_demo_mail")
     _stage(harness, "OFFER", "local virtual mail offer")
     card = " ".join(node.get("text", "") + " " + node.get("content-desc", "") for node in harness.hierarchy().iter("node"))
-    require("가상" in card, "Demo mail is not labeled virtual")
+    require("데모" in card, "Demo mail is not labeled as a demo")
     harness.tap("action_reply")
     _stage(harness, "DICTATING", "local demo reply prompt")
     harness.tap("action_demo_dictate")

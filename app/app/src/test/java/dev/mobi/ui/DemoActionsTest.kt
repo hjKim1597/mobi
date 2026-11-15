@@ -7,8 +7,8 @@ class DemoActionsTest {
     @Test fun fixedFixturesAreClearlyLocalAndContainNoAccountIdentifiers() {
         assertTrue(DemoActions.offerSentences.endsWith("회신 내용을 작성할까요?"))
         assertTrue(DemoActions.calendarOffer.endsWith("일정 내용을 확인할까요?"))
-        assertTrue(DemoActions.mailTitle.contains("가상"))
-        assertTrue(DemoActions.mailDetail.contains("가상 담당자"))
+        assertTrue(DemoActions.mailTitle.contains("회의 시간 확인"))
+        assertTrue(DemoActions.mailDetail.contains("A 담당자"))
         assertTrue(DemoActions.replyReadback.contains(DemoActions.replyText))
         assertTrue(DemoActions.replyReadback.contains("‘보내’"))
         assertTrue(DemoActions.calendarReadback.contains("2026년 11월 10일"))

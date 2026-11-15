@@ -36,7 +36,7 @@ Virtual Console session의 POST heartbeat를 별도 실행기로 초당 1회 유
 ## 실제 화면 검증
 
 1. **데모 보기**를 누르고 노크 뒤 응답 버튼이 보이면 **들을래요**를 누른다. 짧은 응답 창을 놓치면 데모를 다시 시작한다.
-2. **하늘 · 오전 일정**과 가상 일정 상세를 screenshot/UI XML로 저장한다.
+2. **하늘 · 오전 일정**과 데모 일정 상세를 screenshot/UI XML로 저장한다.
 3. **다음**을 누르고 **도담 · 이동 안내**, 다시 **다음**으로 **새봄 · 오늘의 메모**를 각각 저장한다.
 4. 한 번 더 **다음**을 눌러 **브리핑이 끝났어요**를 저장한다. 완료 후 다음 버튼이 숨겨지는지도 확인한다.
 5. package dump에서 RECORD_AUDIO 미부여, `dumpsys activity services dev.mobi`에서 microphone FGS가 없음을 확인한다. 비행기 모드/Wi-Fi off 상태를 재확인한다.

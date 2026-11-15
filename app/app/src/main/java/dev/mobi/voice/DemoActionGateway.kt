@@ -16,14 +16,14 @@ class DemoActionGateway(private val audio: (String)->WavAudio?, private val now:
         sentence(DemoActions.offerSentences,"demo_mail"),
         sentence(DemoActions.replyPrompt,"demo_prompt"),
         sentence(DemoActions.calendarOffer,"demo_calendar_offer"),
-        ActionDisplay(sender="가상 담당자",subject=DemoActions.mailTitle,summary=DemoActions.mailDetail))),cb)
+        ActionDisplay(sender="A 담당자",subject=DemoActions.mailTitle,summary=DemoActions.mailDetail))),cb)
     override fun propose(request: ActionProposalRequest,cb: (Result<ActionProposal>)->Unit): CancelHandle {
         require(request.tripId.startsWith("demo-"))
         val calendar=request.kind=="calendar_insert"
         val proposal=ActionProposal(UUID.randomUUID().toString(),1,"awaiting_approval","demo-content",
             sentence(if(calendar) DemoActions.calendarReadback else DemoActions.replyReadback,if(calendar) "demo_calendar" else "demo_reply"),
             if(calendar) ActionDisplay(title="회의 시간 확인",start="2026-11-10T14:00:00+09:00",end="2026-11-10T14:30:00+09:00",timeZone="Asia/Seoul")
-            else ActionDisplay(sender="가상 담당자",subject=DemoActions.mailTitle,body=DemoActions.replyText),now()+90000,null)
+            else ActionDisplay(sender="A 담당자",subject=DemoActions.mailTitle,body=DemoActions.replyText),now()+90000,null)
         rows[proposal.actionId]=Row(proposal,request.kind)
         return respond(proposal,cb)
     }

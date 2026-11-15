@@ -774,7 +774,7 @@ class Harness:
     def voice_offline(self):
         from fake_server import today
         expected = today(production_knock=True)["knock"]["offline"]
-        require("?" not in expected["text"] and "들을까요" not in expected["text"], "Offline asset asks a question")
+        require("?" not in expected["text"] and "들으시겠어요" not in expected["text"], "Offline asset asks a question")
         self.fixture_request("config", {"productionKnock": True})
         self.command("endpoint", url="http://127.0.0.1:8788")
         self.open()

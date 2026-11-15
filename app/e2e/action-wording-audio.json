@@ -201,7 +201,7 @@
       "bytePreserved": true
     },
     "action_demo_mail.wav": {
-      "text": "가상 메일이 있어요. 가상 담당자가 회의 시간을 확인해 달라고 했어요. 회신 내용을 작성할까요?",
+      "text": "회신이 필요한 메일이 있어요. A 담당자가 회의 시간을 확인해 달라고 했어요. 회신 내용을 작성할까요?",
       "model": "@cf/myshell-ai/melotts",
       "lang": "kr",
       "version": "action-wording-v1",
@@ -209,14 +209,14 @@
       "sourceAttempt": 1,
       "channels": 1,
       "bitsPerSample": 16,
-      "bytes": 837594,
-      "durationSeconds": 9.496031746031745,
-      "textSha256": "693e3df0434610a229135358b3f6438d07c6822262f04efa6db0d33244da7703",
-      "sha256": "bd0c48327cc8651b007cc74bcadb3bb1fceeb75bb34ede4dbc9c45c4bc3dbad6",
-      "sourceSha256": "bd0c48327cc8651b007cc74bcadb3bb1fceeb75bb34ede4dbc9c45c4bc3dbad6",
+      "bytes": 873434,
+      "durationSeconds": 9.902380952380952,
+      "textSha256": "56faf8a4ae5e0466a0241922aa187b1e43c2c70cfd433db4a815efbd6e3c92f5",
+      "sha256": "709ced390a88a958a761f39a0a07a3d920dd5cf134f81a3453b46906e703fb3d",
+      "sourceSha256": "709ced390a88a958a761f39a0a07a3d920dd5cf134f81a3453b46906e703fb3d",
       "sourceSampleRate": 44100,
       "resample": "original MeloTTS WAV preserved byte-for-byte at 44100 Hz",
-      "responseAudioSha256": "bd0c48327cc8651b007cc74bcadb3bb1fceeb75bb34ede4dbc9c45c4bc3dbad6",
+      "responseAudioSha256": "709ced390a88a958a761f39a0a07a3d920dd5cf134f81a3453b46906e703fb3d",
       "bytePreserved": true
     }
   }

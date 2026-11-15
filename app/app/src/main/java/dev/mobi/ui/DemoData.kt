@@ -9,9 +9,9 @@ data class DemoBriefing(
 
 object DemoData {
     val briefings: List<DemoBriefing> = listOf(
-        DemoBriefing("하늘", "오전 일정", "가상 일정 · 오전 9시, 팀 회의"),
-        DemoBriefing("도담", "이동 안내", "가상 일정 · 오전 11시, 시청 방문"),
-        DemoBriefing("새봄", "오늘의 메모", "가상 일정 · 오후 2시, 자료 확인"),
+        DemoBriefing("하늘", "오전 일정", "데모 일정 · 오전 9시, 팀 회의"),
+        DemoBriefing("도담", "이동 안내", "데모 일정 · 오전 11시, 시청 방문"),
+        DemoBriefing("새봄", "오늘의 메모", "데모 일정 · 오후 2시, 자료 확인"),
     )
 }
 

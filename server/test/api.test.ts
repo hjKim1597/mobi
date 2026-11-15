@@ -1088,7 +1088,7 @@ describe('voice API contracts', () => {
     expect(Object.keys(body).sort()).toEqual(['date', 'events', 'knock', 'timeZone']);
     expect(body.knock).toMatchObject({ version: 'knock-v1', date: body.date, timeZone: body.timeZone, eventCount: 0 });
     expect(body.knock.online.audio.mimeType).toBe('audio/wav');
-    expect(body.knock.offline.text).not.toMatch(/들 듣|들을까요|[?？]/);
+    expect(body.knock.offline.text).not.toMatch(/들 듣|들으시겠어요|[?？]/);
   });
 });
 
@@ -1331,7 +1331,7 @@ describe('bundled voice routes with actual generated assets', () => {
     const today = await SELF.fetch('https://mobi.invalid/v1/today', { headers: { Authorization: 'Bearer ' + device.deviceToken } });
     expect(today.status).toBe(200); const bundle = await today.json() as any;
     expect(bundle.knock.online.audio.data.length).toBeGreaterThan(1000);
-    expect(bundle.knock.offline.text).not.toMatch(/[?？]|들을까요/);
+    expect(bundle.knock.offline.text).not.toMatch(/[?？]|들으시겠어요/);
     for (const path of ['confirm', 'turns']) {
       const response = await SELF.fetch('https://mobi.invalid/v1/' + path, { method: 'POST',
         headers: { Authorization: 'Bearer ' + device.deviceToken, 'Content-Type': 'application/json' },

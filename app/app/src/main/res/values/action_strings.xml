@@ -5,9 +5,9 @@
     <string name="action_approve_calendar">추가하기</string>
     <string name="action_cancel">취소</string>
     <string name="action_decline">이번에는 안 할게요</string>
-    <string name="action_demo_mail">가상 메일 보기</string>
-    <string name="action_demo_voice">가상 일정 요청</string>
-    <string name="action_demo_dictate">가상 답장 확인</string>
+    <string name="action_demo_mail">데모 메일 보기</string>
+    <string name="action_demo_voice">데모 일정 요청</string>
+    <string name="action_demo_dictate">데모 답장 확인</string>
     <string name="action_demo_clarify">시간 확인</string>
-    <string name="action_demo_badge">가상 · 실제 메일은 보내지 않았어요</string>
+    <string name="action_demo_badge">데모 · 실제 메일은 보내지 않았어요</string>
 </resources>

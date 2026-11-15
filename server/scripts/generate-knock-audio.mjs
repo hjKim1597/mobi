@@ -9,9 +9,9 @@ const root = resolve(server, '..');
 const output = resolve(server, 'src/knock-audio.ts');
 const texts = {
   '0': '오늘 일정은 없어요.',
-  '1-online': '오늘 일정이 한 개 있어요. 들을까요?',
+  '1-online': '오늘 일정이 한 개 있어요. 들으시겠어요?',
   '1-offline': '오늘 일정이 한 개 있어요. 정차하면 카드로 보여드릴게요.',
-  'many-online': '오늘 일정이 여러 개 있어요. 들을까요?',
+  'many-online': '오늘 일정이 여러 개 있어요. 들으시겠어요?',
   'many-offline': '오늘 일정이 여러 개 있어요. 정차하면 카드로 보여드릴게요.',
 };
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
